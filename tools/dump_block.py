@@ -25,6 +25,15 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if _SRC.is_dir():
     sys.path.insert(0, str(_SRC))
 
+# Pin deterministic (document-order) tree-sitter captures BEFORE the pipeline
+# imports: py-tree-sitter's QueryCursor.captures() returns nodes in a
+# per-parse-random order, which makes _extract_refs' MAX_REFS_PER_FILE cap keep
+# a random subset in big files (see _deterministic_captures.py for the full
+# diagnosis). No effect on files under the cap.
+import _deterministic_captures  # noqa: E402
+
+_deterministic_captures.apply()
+
 from codegraph.atlas import assemble  # noqa: E402
 from codegraph.cache import IndexCache  # noqa: E402
 from codegraph.index import update  # noqa: E402

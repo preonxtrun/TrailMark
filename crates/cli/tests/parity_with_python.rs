@@ -153,6 +153,34 @@ test("fetchJson builds the url", () => {
     ),
 ];
 
+/// The optional user profile written into `.codegraph/profile.txt` for the
+/// profile parity fixture: exercises fact/rule parsing, `#` comments, ignored
+/// lines, whitespace stripping, bare `fact:`/`rule:` prefixes, and both caps
+/// (8 facts / 6 rules). One rule is long enough to wrap at 76 bytes.
+const PROFILE_TXT: &str = "\
+# cluster profile — comments and everything else are ignored
+fact: partitions: gpu(a100, 24h), cpu; submit with sbatch -A acct
+rule:   check sacct once per job; never poll squeue in a loop
+note: neither fact nor rule — ignored
+fact:
+rule:
+fact: scratch is /scratch/$USER and is purged every 30 days
+fact: the gpu queue drains at midnight sharp
+fact: python on login nodes is 3.12 with numpy preloaded
+fact: datasets live under /datasets, read-only
+fact: node local scratch is /tmp/scratch, wiped on reboot
+fact: srun rejects jobs without --account
+fact: the shared filesystem quotas reset on the 1st
+fact: ninth fact — beyond the cap, must be dropped
+rule: prefer srun over interactive shells on login nodes
+rule: never commit .codegraph/ or AGENTS.md
+rule: long rule that must wrap: when a delegated exploration returns a summary, keep its file:line references so the same code is never retrieved twice
+rule: r4
+rule: r5
+rule: r6
+rule: seventh rule — beyond the cap, must be dropped
+";
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -355,5 +383,123 @@ fn parity_with_python_no_issue_atlas_only() {
             rs_path.display()
         );
     }
+    fs::remove_dir_all(&base).ok();
+}
+
+/// Profile parity: a fixture repo WITH `.codegraph/profile.txt` + an issue.
+/// The profile contributes a LAB facts section (drop rank 5 — after GLOSSARY,
+/// before PLAN) and extra RULES lines wrapped with the base-rule fmt; both
+/// pipelines must produce byte-identical bodies.
+#[test]
+fn parity_with_python_profile_lab_and_extra_rules() {
+    let Some(uv) = uv_path() else {
+        eprintln!("parity_with_python_profile: SKIPPED — uv not found");
+        return;
+    };
+    if !python_available(&uv) {
+        eprintln!("parity_with_python_profile: SKIPPED — python unavailable");
+        return;
+    }
+    let base = unique_dir("profile");
+    let repo_py = base.join("repo_py");
+    let repo_rs = base.join("repo_rs");
+    build_repo(&repo_py);
+    build_repo(&repo_rs);
+    for repo in [&repo_py, &repo_rs] {
+        let cg = repo.join(".codegraph");
+        fs::create_dir_all(&cg).expect("mkdir .codegraph");
+        fs::write(cg.join("profile.txt"), PROFILE_TXT).expect("write profile.txt");
+    }
+
+    // At a generous budget every section survives; at 2048 the packer drops
+    // GLOSSARY/LAB/PLAN variants in rank order — both sides must agree either
+    // way, byte for byte.
+    for budget in [4096usize, 2048] {
+        let dump = workspace_root().join("tools/dump_block.py");
+        let out = Command::new(&uv)
+            .args([
+                "run",
+                "python",
+                dump.to_str().unwrap(),
+                "--root",
+                repo_py.to_str().unwrap(),
+                "--issue",
+                ISSUE,
+                "--cli",
+                CLI,
+                "--budget",
+                &budget.to_string(),
+            ])
+            .current_dir(workspace_root())
+            .output()
+            .expect("run dump_block.py");
+        assert!(
+            out.status.success(),
+            "dump_block.py failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let body_py = String::from_utf8(out.stdout).expect("python body is utf-8");
+
+        let langs = codegraph_core::default_langs();
+        let cache = IndexCache::new(&repo_rs.join(".codegraph"));
+        let data = update(repo_rs.to_str().unwrap(), Some(&langs), 0, Some(&cache));
+        let body_rs = assemble(&data, Some(ISSUE), CLI, budget);
+
+        if body_py != body_rs {
+            let py_path = base.join(format!("body_py_{budget}.txt"));
+            let rs_path = base.join(format!("body_rs_{budget}.txt"));
+            fs::write(&py_path, &body_py).unwrap();
+            fs::write(&rs_path, &body_rs).unwrap();
+            panic!(
+                "profile bodies differ at budget {budget}\npython body: {}\nrust body:   {}",
+                py_path.display(),
+                rs_path.display()
+            );
+        }
+        assert_eq!(body_py, body_rs);
+        assert!(body_py.len() <= budget, "body exceeds budget {budget}");
+        if budget >= 4096 {
+            // every profile feature is visible in the assembled block
+            assert!(body_py.contains("LAB"), "LAB section missing:\n{body_py}");
+            assert!(
+                body_py.contains("- partitions: gpu(a100, 24h), cpu; submit with sbatch -A acct")
+            );
+            assert!(
+                !body_py.contains("ninth fact"),
+                "facts beyond the cap must not leak:\n{body_py}"
+            );
+            assert!(body_py.contains("- check sacct once per job"));
+            assert!(
+                body_py.contains("same code is never retrieved twice"),
+                "wrapped extra rule must survive:\n{body_py}"
+            );
+            assert!(
+                !body_py.contains("seventh rule"),
+                "rules beyond the cap must not leak:\n{body_py}"
+            );
+            assert!(
+                !body_py.contains("neither fact nor rule"),
+                "ignored lines must not leak:\n{body_py}"
+            );
+        }
+    }
+    fs::remove_dir_all(&base).ok();
+}
+
+/// Negative control for the profile fixture: with no `.codegraph/profile.txt`
+/// the LAB section must be absent (profile reads are optional, never fatal).
+#[test]
+fn rust_profile_absent_means_no_lab_section() {
+    let base = unique_dir("noprofile");
+    let repo_rs = base.join("repo_rs");
+    build_repo(&repo_rs);
+    let langs = codegraph_core::default_langs();
+    let cache = IndexCache::new(&repo_rs.join(".codegraph"));
+    let data = update(repo_rs.to_str().unwrap(), Some(&langs), 0, Some(&cache));
+    let body = assemble(&data, Some(ISSUE), CLI, 4096);
+    assert!(
+        !body.contains("LAB"),
+        "no profile must mean no LAB:\n{body}"
+    );
     fs::remove_dir_all(&base).ok();
 }

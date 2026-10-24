@@ -49,6 +49,38 @@ Quality-of-life checks: `codegraph doctor` (cache freshness, block present, budg
 `codegraph stats`. To measure the effect on your own workflow: `python -m bench.minibench`
 (see `docs/GENERATIONS.md`).
 
+## Multi-agent runs
+
+Two supported patterns (both proven by the benchmark harness, which uses them itself):
+
+1. **Sequential tasks, one worktree** — re-run `codegraph focus "<next task>"` before each
+   agent run; the block is idempotent and hash-stable, so re-focusing is instant.
+2. **Concurrent agents — one worktree each** (the safe pattern): agents never share a
+   worktree, so each has its own block, index, and leads:
+   ```bash
+   git worktree add --detach ../wt-a HEAD && git worktree add --detach ../wt-b HEAD
+   (cd ../wt-a && codegraph init && codegraph focus "task A") &
+   (cd ../wt-b && codegraph init && codegraph focus "task B") &
+   ```
+   `bench.minibench --parallel 3` runs exactly this automatically. Never point two running
+   agents at one worktree — they'd fight over the single block's task leads.
+
+## Multi-harness adapters
+
+Cursor rules, Copilot instructions and GEMINI.md don't natively read AGENTS.md — init can
+write tiny pointer files (never duplicated content, so they can't go stale):
+
+```bash
+codegraph init --harness claude,gemini,cursor,copilot
+# → CLAUDE.md (symlink), GEMINI.md, .cursor/rules/agents-md.mdc, .github/copilot-instructions.md
+```
+
+## How it compares
+
+See `docs/COMPARISON.md` — the honest teardown of aider, Sourcegraph Code Finder, repomix,
+Claude/Cursor memory, TokenEconomizer and others: what we adopted, what we rejected, and
+the seven differentiators no tool combines.
+
 ## Benchmark (SWE-bench Verified, standard pipeline)
 
 See `bench/README.md`. Control arm = stock container; treatment arm = container + one setup

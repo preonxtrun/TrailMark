@@ -47,6 +47,10 @@ fn main() {
             cmd_remove(&invocation(&root_flag, budget_flag, json_flag), purge)
         }
         Some(Cmd::Stats) => cmd_stats(&invocation(&root_flag, budget_flag, json_flag)),
+        Some(Cmd::Refs { langs }) => cmd_refs(
+            &invocation(&root_flag, budget_flag, json_flag),
+            langs.as_deref(),
+        ),
         Some(Cmd::Doctor) => cmd_doctor(&invocation(&root_flag, budget_flag, json_flag)),
         Some(Cmd::Watch { interval }) => {
             cmd_watch(&invocation(&root_flag, budget_flag, json_flag), interval)
@@ -114,6 +118,12 @@ enum Cmd {
         /// Also delete the .codegraph/ state tree.
         #[arg(long)]
         purge: bool,
+    },
+    /// Debug: print the fully-resolved reference set (diagnostic tool).
+    Refs {
+        /// Comma-separated languages (default: py,ts,js,go,rs).
+        #[arg(long, global = true)]
+        langs: Option<String>,
     },
     /// Print index statistics from the cache.
     Stats,
@@ -403,6 +413,47 @@ fn cmd_remove(inv: &Invocation, purge: bool) -> i32 {
             if purged { ", .codegraph/ purged" } else { "" }
         );
     }
+    0
+}
+
+/// Debug: build the full index (no cache) and print every resolved ref as
+/// `src_file\tdst_name\tdst_file\tline` (TSV) or a JSON object. Mirrors
+/// `tools/dump_refs.py` so the two implementations' ref sets can be diffed.
+fn cmd_refs(inv: &Invocation, langs_raw: Option<&str>) -> i32 {
+    let root = root_of(inv);
+    let langs = parse_langs(langs_raw.map(|s| s.to_string()).as_ref());
+    let data = build(root.to_string_lossy().as_ref(), Some(&langs), 0, None);
+    if inv.json {
+        let refs: Vec<serde_json::Value> = data
+            .refs
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "src_file": r.src_file,
+                    "dst_name": r.dst_name,
+                    "dst_file": r.dst_file,
+                    "line": r.line,
+                })
+            })
+            .collect();
+        json_out(
+            inv,
+            serde_json::json!({
+                "root": data.root,
+                "files": data.files.len(),
+                "refs": refs,
+            }),
+        );
+        return 0;
+    }
+    for r in &data.refs {
+        println!("{}\t{}\t{}\t{}", r.src_file, r.dst_name, r.dst_file, r.line);
+    }
+    eprintln!(
+        "codegraph refs: {} files, {} refs",
+        data.files.len(),
+        data.refs.len()
+    );
     0
 }
 

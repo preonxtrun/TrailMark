@@ -1,12 +1,13 @@
-//! ATLAS: IndexData → map / test-graph / glossary / rules → byte-budgeted block
-//! body (port of `atlas/__init__.py`).
+//! ATLAS: IndexData → map / test-graph / glossary / rules / profile facts →
+//! byte-budgeted block body (port of `atlas/__init__.py`).
 //!
 //! The public entry point is [`assemble`]: it returns the block BODY (no
 //! markers); the caller writes it via `codegraph_core::emit`. Output is
 //! deterministic — same (repo state, issue text, cli, budget) ⇒ byte-identical
 //! body: every list is sorted with total tie-breaks, pagerank scores are used
 //! for ordering only, and no timestamps or floats are ever emitted (invariant
-//! #1).
+//! #1). The optional user profile (`.codegraph/profile.txt`) is read once per
+//! assemble and contributes the LAB facts section plus extra RULES lines.
 
 pub mod budget;
 pub mod builder;
@@ -14,8 +15,10 @@ pub mod glossary;
 pub mod rules;
 pub mod testgraph;
 
+use std::path::Path;
+
 use budget::{pack, Section};
-use codegraph_core::IndexData;
+use codegraph_core::{wrap_default, IndexData};
 
 /// First line of every block body (SPEC block format).
 pub const TITLE: &str = "# CODEGRAPH ATLAS — auto-generated, do not edit inside markers";
@@ -41,13 +44,88 @@ pub const MAP_CORE_ROWS: usize = 3;
 /// TESTS runner row protected from item drops.
 pub const TESTS_CORE_ROWS: usize = 1;
 
+/// Drop rank for user-authored environment facts (profile file): after
+/// GLOSSARY, before PLAN — facts are cheap and high-value on lab/cluster
+/// workloads (Python: `R_LAB = 5`).
+pub const R_LAB: u32 = 5;
+
+/// Maximum facts kept from the profile file (Python: `facts[:8]`).
+pub const MAX_PROFILE_FACTS: usize = 8;
+/// Maximum extra rules kept from the profile file (Python: `extra_rules[:6]`).
+pub const MAX_PROFILE_RULES: usize = 6;
+
+/// Python `str.splitlines()` equivalent: split on the full separator set
+/// (`\n`, `\r`, `\r\n`, `\v`, `\f`, `\x1c`–`\x1e`, `\u{85}`, U+2028/9) without
+/// keep-ends. A trailing separator does not produce a trailing empty line.
+fn py_splitlines(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // \r\n is one separator
+            '\r' if chars.peek() == Some(&'\n') => {
+                chars.next();
+                lines.push(std::mem::take(&mut cur));
+            }
+            '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}'
+            | '\u{2028}' | '\u{2029}' => {
+                lines.push(std::mem::take(&mut cur));
+            }
+            other => cur.push(other),
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
+/// `(facts, extra_rules)` from an optional `.codegraph/profile.txt` in `root`.
+///
+/// Port of `atlas.load_profile`: lines beginning `fact:` become facts and
+/// `rule:` lines become extra rules (payload stripped; caps 8 / 6); everything
+/// else — `#` comments included — is ignored. A missing or unreadable file
+/// yields `([], [])`. The payload check is "one more character after the
+/// prefix", which for a `fact:`/`rule:`-prefixed line is exactly the Python
+/// `len(line) > 5` guard (the prefix alone is 5 chars). Invalid UTF-8 is
+/// replaced rather than raising (the reference would raise `UnicodeDecodeError`
+/// past its `except OSError`; Rust library paths must not panic).
+pub fn load_profile(root: &str) -> (Vec<String>, Vec<String>) {
+    let path = Path::new(root).join(".codegraph").join("profile.txt");
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return (Vec::new(), Vec::new()),
+    };
+    let mut facts: Vec<String> = Vec::new();
+    let mut extra_rules: Vec<String> = Vec::new();
+    for line in py_splitlines(&String::from_utf8_lossy(&bytes)) {
+        let line = line.trim();
+        if let Some(payload) = line.strip_prefix("fact:") {
+            if !payload.is_empty() {
+                facts.push(payload.trim().to_string());
+            }
+        } else if let Some(payload) = line.strip_prefix("rule:") {
+            if !payload.is_empty() {
+                extra_rules.push(payload.trim().to_string());
+            }
+        }
+    }
+    facts.truncate(MAX_PROFILE_FACTS);
+    extra_rules.truncate(MAX_PROFILE_RULES);
+    (facts, extra_rules)
+}
+
 /// Build the deterministic atlas block BODY (no markers) within `budget` bytes.
 ///
 /// Sections, in emit order: title, RULES (full text, with a one-line compact
 /// fallback), MAP (directory roles plus pagerank-ordered hot files), TESTS
 /// (runner and src→test map), PLAN (only when `issue` is given, verbose and
-/// compact variants), GLOSSARY. The byte budget is enforced by [`pack`] with
-/// the SPEC drop order; entries are never split.
+/// compact variants), LAB (profile facts), GLOSSARY. The optional
+/// `.codegraph/profile.txt` is read once per assemble; profile rules extend
+/// the full-RULES section and profile facts become the LAB section. The byte
+/// budget is enforced by [`pack`] with the SPEC drop order; entries are never
+/// split.
 pub fn assemble(data: &IndexData, issue: Option<&str>, cli: &str, budget: usize) -> String {
     let pr = builder::pagerank_scores(data);
     assemble_with_pagerank(data, issue, cli, budget, pr.as_ref())
@@ -65,14 +143,15 @@ pub fn assemble_with_pagerank(
 ) -> String {
     let mut sections: Vec<Section> = Vec::new();
     sections.push(Section::with_rank("", R_HEADER, vec![TITLE.to_string()]));
-    sections.push(Section::with_rank(
-        "RULES",
-        R_RULES_FULL,
-        rules::flight_rules(cli)
-            .split('\n')
-            .map(String::from)
-            .collect(),
-    ));
+    let (facts, extra_rules) = load_profile(&data.root);
+    let mut rules_items: Vec<String> = rules::flight_rules(cli)
+        .split('\n')
+        .map(String::from)
+        .collect();
+    for extra in &extra_rules {
+        rules_items.push(wrap_default(extra, rules::WRAP_WIDTH));
+    }
+    sections.push(Section::with_rank("RULES", R_RULES_FULL, rules_items));
     sections.push(Section::with_rank(
         "RULES",
         R_RULES_COMPACT,
@@ -100,6 +179,13 @@ pub fn assemble_with_pagerank(
             sections.push(Section::with_rank("PLAN", R_PLAN_VERBOSE, verbose));
             sections.push(Section::with_rank("PLAN", R_PLAN_COMPACT, compact));
         }
+    }
+    if !facts.is_empty() {
+        sections.push(Section::with_rank(
+            "LAB",
+            R_LAB,
+            facts.iter().map(|fact| format!("- {fact}")).collect(),
+        ));
     }
     sections.push(Section::with_rank(
         "GLOSSARY",
@@ -230,5 +316,118 @@ mod tests {
         let data = repo();
         let body = assemble(&data, Some("parse_config"), "generic", 2048);
         assert!(codegraph_core::byte_len(&body) <= 2048);
+    }
+
+    fn write_profile(tag: &str, text: &str) -> String {
+        let dir = std::env::temp_dir().join(format!(
+            "cg_profile_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join(".codegraph")).expect("mkdir .codegraph");
+        std::fs::write(dir.join(".codegraph/profile.txt"), text).expect("write profile");
+        dir.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn load_profile_parses_facts_rules_comments_and_caps() {
+        let text = "\
+# cluster profile (comment — ignored)
+fact: partitions: gpu(a100, 24h), cpu; submit with sbatch -A acct
+rule:   check sacct once per job; never poll squeue in a loop
+note: neither fact nor rule — ignored
+fact:
+
+rule:
+fact: scratch is /scratch/$USER, purged every 30 days
+fact: two
+fact: three
+fact: four
+fact: five
+fact: six
+fact: seven
+fact: eight
+fact: nine — beyond the cap
+rule: r1
+rule: r2
+rule: r3
+rule: r4
+rule: r5
+rule: r6
+rule: r7 — beyond the cap
+";
+        let root = write_profile("caps", text);
+        let (facts, rules) = load_profile(&root);
+        assert_eq!(facts.len(), 8, "facts cap at 8: {facts:?}");
+        assert_eq!(
+            facts[0],
+            "partitions: gpu(a100, 24h), cpu; submit with sbatch -A acct"
+        );
+        assert!(!facts.iter().any(|f| f.contains("beyond the cap")));
+        assert_eq!(rules.len(), 6, "rules cap at 6: {rules:?}");
+        assert_eq!(
+            rules[0],
+            "check sacct once per job; never poll squeue in a loop"
+        );
+        assert!(!rules.iter().any(|r| r.contains("beyond the cap")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_profile_missing_or_empty_file_is_empty() {
+        let (facts, rules) = load_profile("/nonexistent/repo/root");
+        assert!(facts.is_empty() && rules.is_empty());
+        let root = write_profile("empty", "# only comments\n\nplain line\n");
+        let (facts, rules) = load_profile(&root);
+        assert!(facts.is_empty() && rules.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn py_splitlines_matches_python_str_splitlines() {
+        assert_eq!(py_splitlines("a\nb"), vec!["a", "b"]);
+        assert_eq!(py_splitlines("a\n"), vec!["a"]); // no trailing empty line
+        assert_eq!(py_splitlines("a\r\nb"), vec!["a", "b"]); // \r\n is one break
+        assert_eq!(py_splitlines("a\rb"), vec!["a", "b"]);
+        assert_eq!(py_splitlines("\n"), vec![""]);
+        assert_eq!(py_splitlines(""), Vec::<String>::new());
+        assert_eq!(py_splitlines("a\n\nb"), vec!["a", "", "b"]);
+        assert_eq!(py_splitlines("a\u{2028}b\u{85}c"), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn assemble_renders_lab_and_wrapped_profile_rules() {
+        let data = repo();
+        let long_rule = "rule: when a delegated exploration returns a summary, keep its file:line references so the same code is never retrieved twice";
+        let root = write_profile(
+            "lab",
+            "# profile\nfact: gpu queue drains at midnight\nfact: scratch quota 1 TB\n\
+             rule: check sacct once per job\n{long_rule}\n",
+        );
+        let mut data = data;
+        data.root = root.clone();
+        let body = assemble(&data, Some("fix shared_api"), "generic", 8192);
+        assert!(body.contains("LAB"), "LAB section missing:\n{body}");
+        assert!(body.contains("- gpu queue drains at midnight"));
+        assert!(body.contains("- scratch quota 1 TB"));
+        // extra rules are wrapped with the same fmt as base rules and appended
+        // to RULES after the built-in bullets
+        let rules_idx = body.find("RULES").expect("RULES header");
+        let lab_idx = body.find("LAB").expect("LAB header");
+        let rules_block = &body[rules_idx..lab_idx];
+        assert!(rules_block.contains("check sacct once per job"));
+        assert!(rules_block.contains("  references so the same code is never retrieved twice"));
+        // LAB drops after GLOSSARY but before PLAN under budget pressure
+        let tight = assemble(&data, Some("fix shared_api"), "generic", 900);
+        if tight.contains("PLAN") {
+            assert!(
+                tight.contains("LAB"),
+                "LAB survives while PLAN does:\n{tight}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

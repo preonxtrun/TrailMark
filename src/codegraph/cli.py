@@ -73,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_init.add_argument("--workers", type=int, default=None, help="parser workers (default: cpu count)")
     p_init.add_argument(
+        "--harness",
+        default="",
+        help="comma-separated adapter files to write: claude,gemini,cursor,copilot (default: none)",
+    )
+    p_init.add_argument(
         "--force", action="store_true", help="full rebuild instead of mtime-incremental update"
     )
     p_init.set_defaults(func=_cmd_init)
@@ -186,6 +191,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
         return 1
     body = assemble(data, None, "generic", budget)
     changed = write_block(root / "AGENTS.md", body)
+    harnesses = getattr(args, "harness", None)
+    if harnesses:
+        from .emit.harnesses import write_adapters
+
+        adapters = write_adapters(
+            root, [h.strip() for h in str(harnesses).split(",") if h.strip()]
+        )
+    else:
+        adapters = []
     outlines = _generate_top_outlines(data, root)
     files, symbols, refs = len(data.files), len(data.symbols()), len(data.refs)
     _emit(
@@ -198,6 +212,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
             "budget": budget,
             "block_bytes": byte_len(body),
             "block_changed": changed,
+            "harness_adapters": [str(p.relative_to(root)) for p in adapters],
             "outlines": outlines,
         },
         args,

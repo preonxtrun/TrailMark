@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..model import BLOCK_END, BLOCK_START
+from .secrets import assert_no_secrets
 
 AGENTS_FILENAME = "AGENTS.md"
 
@@ -54,6 +55,7 @@ def write_block(path: Path, body: str) -> bool:
     - Refuses (ValueError) when the file contains malformed markers (one marker
       without its pair): we never silently mutate content we cannot restore.
     """
+    assert_no_secrets(body)
     path = Path(path)
     block = render(body)
     try:
