@@ -65,11 +65,17 @@ class LeakageError(RuntimeError):
     """Raised when the issue text embeds grading secrets (SPEC invariant #3)."""
 
 
-def SETUP_TREATMENT(cli: str, repo_dir: str, src_mount: str) -> list[str]:
+def SETUP_TREATMENT(
+    cli: str, repo_dir: str, src_mount: str, bin_mount: str | None = None
+) -> list[str]:
     """Docker-exec shell steps for the treatment arm, in order.
 
-    1. install codegraph from the mounted source (``pip install -e`` with a
-       ``uv tool install`` fallback; assumes the image has a build backend and network),
+    1. install codegraph: when *bin_mount* is given (path of a prebuilt
+       ``codegraph`` binary inside the container, e.g. the Rust release build
+       bind-mounted by run.py), it is copied onto PATH — no pip/uv, no Python
+       needed in the image. Otherwise codegraph is installed from the mounted
+       Python source (``pip install -e`` with a ``uv tool install`` fallback;
+       assumes the image has a build backend and network),
     2. ``codegraph init`` — atlas-only block, deterministic, byte-budgeted,
     3. ``codegraph focus`` — full block (atlas + PLAN) regenerated from cache + issue.
 
@@ -80,8 +86,13 @@ def SETUP_TREATMENT(cli: str, repo_dir: str, src_mount: str) -> list[str]:
     src = shlex.quote(src_mount)
     repo = shlex.quote(repo_dir)
     cli_quoted = shlex.quote(cli)
+    if bin_mount:
+        bin_src = shlex.quote(bin_mount)
+        install = f"install -m 0755 {bin_src} /usr/local/bin/codegraph"
+    else:
+        install = f"pip install --quiet -e {src} || uv tool install --force {src}"
     return [
-        f"pip install --quiet -e {src} || uv tool install --force {src}",
+        install,
         f"codegraph init --root {repo} --budget {BUDGET_BYTES} --json",
         f"codegraph focus --issue-file {ISSUE_PATH} --cli {cli_quoted} --root {repo} --json",
     ]
