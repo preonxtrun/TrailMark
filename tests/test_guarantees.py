@@ -136,7 +136,7 @@ def test_g4_no_leakage(tmp_path: Path):
     """The issue text is the ONLY task input: record canaries must never surface."""
     repo = make_repo(tmp_path)
     cache = IndexCache(repo / ".codegraph")
-    data = update(root=str(repo), langs=None, workers=1, cache=cache)
+    update(root=str(repo), langs=None, workers=1, cache=cache)
 
     canary_test = "tests/test_leak.py::test_canary_98123"
     canary_patch = "GOLD_PATCH_CANARY_XYZQ"
