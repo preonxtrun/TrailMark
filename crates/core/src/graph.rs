@@ -151,26 +151,35 @@ pub fn pagerank(
     let dangling: Vec<bool> = out_weight.iter().map(|&w| w == 0.0).collect();
 
     let mut rank = pvec.clone();
+    // Reusable buffers: the arithmetic below is bit-identical to the numpy
+    // reference — `damping*flow + damping*(dangling_mass/n) + (1-damping)*pvec`
+    // with `damping_dm = damping * (dangling_mass / n)` precomputed as a scalar
+    // (same expression order, same rounding).
+    let mut scaled = vec![0.0f64; items.len()];
+    let mut flow = vec![0.0f64; n];
+    let dangling_idx: Vec<usize> = dangling
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &d)| if d { Some(i) } else { None })
+        .collect();
+    let mut dangling_vals = vec![0.0f64; dangling_idx.len()];
     for _ in 0..iters {
-        let scaled: Vec<f64> = src_idx
-            .iter()
-            .zip(&flow_weight)
-            .map(|(&s, &w)| rank[s] * w)
-            .collect();
-        let flow = bincount(&dst_idx, &scaled, n);
-        let dangling_vals: Vec<f64> = rank
-            .iter()
-            .zip(&dangling)
-            .filter_map(|(&v, &d)| if d { Some(v) } else { None })
-            .collect();
+        for (k, (&s, &w)) in src_idx.iter().zip(flow_weight.iter()).enumerate() {
+            scaled[k] = rank[s] * w;
+        }
+        flow.fill(0.0);
+        for (k, &d) in dst_idx.iter().enumerate() {
+            flow[d] += scaled[k];
+        }
+        for (k, &i) in dangling_idx.iter().enumerate() {
+            dangling_vals[k] = rank[i];
+        }
         let dangling_mass = np_sum(&dangling_vals);
-        let dm = dangling_mass / n as f64;
+        let damping_dm = damping * (dangling_mass / n as f64);
         let teleport = 1.0 - damping;
-        rank = flow
-            .iter()
-            .zip(&pvec)
-            .map(|(&f, &p)| damping * f + damping * dm + teleport * p)
-            .collect();
+        for (r, (&f, &p)) in rank.iter_mut().zip(flow.iter().zip(pvec.iter())) {
+            *r = damping * f + damping_dm + teleport * p;
+        }
     }
 
     let total = np_sum(&rank);

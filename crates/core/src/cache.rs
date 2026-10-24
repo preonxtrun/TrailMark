@@ -91,6 +91,21 @@ impl IndexCache {
         }
     }
 
+    /// Open a writable connection with reduced fsync durability.
+    ///
+    /// The index is a derived cache (rebuildable with `codegraph init`), so the
+    /// incremental write path trades crash-atomicity for speed — a deviation
+    /// from the Python reference (which keeps SQLite's default `synchronous=FULL`)
+    /// justified by the SPEC warm-update performance target. The initial
+    /// `save()` keeps default durability: it renames a fully-built temp db over
+    /// the live file, so a crash can only leave the previous (stale but valid)
+    /// index in place.
+    fn write_conn(path: &Path) -> Result<Connection, CodegraphError> {
+        let con = Connection::open(path)?;
+        let _ = con.pragma_update(None, "synchronous", "OFF");
+        Ok(con)
+    }
+
     fn read_only(&self) -> Result<Connection, CodegraphError> {
         // same URI form as the Python reference: file:<path>?mode=ro
         let uri = format!("file:{}?mode=ro", self.db_path.display());
@@ -294,7 +309,7 @@ impl IndexCache {
         if sorted.is_empty() || !self.db_path.exists() {
             return Ok(());
         }
-        let con = Connection::open(&self.db_path)?;
+        let con = Self::write_conn(&self.db_path)?;
         con.execute_batch(SCHEMA)?;
         let tx = con.unchecked_transaction()?;
         for p in &sorted {
@@ -340,7 +355,7 @@ impl IndexCache {
             return Ok(());
         }
         fs::create_dir_all(&self.dir)?;
-        let con = Connection::open(&self.db_path)?;
+        let con = Self::write_conn(&self.db_path)?;
         if fts_outdated(&con) {
             con.execute("DROP TABLE fts", [])?; // derived index — rebuilt by save()
         }
@@ -391,6 +406,91 @@ impl IndexCache {
                     params![s.name, s.signature, s.doc, s.file, s.line, s.kind],
                 )?;
             }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Fused incremental delta: delete `removed` + `changed` paths, then insert
+    /// the changed entries and their refs in ONE connection and transaction.
+    ///
+    /// Equivalent to calling [`Self::remove_files`] followed by
+    /// [`Self::upsert_files`], but halves the journal/fsync cycles and the FTS
+    /// full-scan deletes (the Python reference rescans FTS for changed files
+    /// twice). Used by the warm-update path for the SPEC performance target.
+    pub fn apply_delta(
+        &self,
+        removed: &[String],
+        entries: &[FileEntry],
+        refs: &[Ref],
+    ) -> Result<(), CodegraphError> {
+        let mut paths: Vec<&String> = removed.iter().chain(entries.iter().map(|e| &e.path)).collect();
+        paths.sort();
+        paths.dedup();
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut entry_list: Vec<&FileEntry> = entries.iter().collect();
+        entry_list.sort_by(|a, b| a.path.cmp(&b.path));
+        let path_set: std::collections::HashSet<&String> =
+            entry_list.iter().map(|e| &e.path).collect();
+        let mut ref_list: Vec<&Ref> = refs
+            .iter()
+            .filter(|r| path_set.contains(&r.src_file))
+            .collect();
+        ref_list.sort_by(|a, b| {
+            (
+                a.src_file.as_str(),
+                a.line,
+                a.dst_name.as_str(),
+                a.dst_file.as_str(),
+            )
+                .cmp(&(
+                    b.src_file.as_str(),
+                    b.line,
+                    b.dst_name.as_str(),
+                    b.dst_file.as_str(),
+                ))
+        });
+
+        if !self.db_path.exists() {
+            // nothing to delete; a plain upsert creates the database
+            return self.upsert_files(entries, refs);
+        }
+        let con = Self::write_conn(&self.db_path)?;
+        con.execute_batch(SCHEMA)?;
+        if fts_outdated(&con) {
+            con.execute("DROP TABLE fts", [])?;
+        }
+        let tx = con.unchecked_transaction()?;
+        for p in &paths {
+            con.execute("DELETE FROM files WHERE path = ?", params![*p])?;
+            con.execute("DELETE FROM symbols WHERE file = ?", params![*p])?;
+            con.execute("DELETE FROM refs WHERE src_file = ?", params![*p])?;
+            con.execute("DELETE FROM fts WHERE path = ?", params![*p])?;
+        }
+        for e in &entry_list {
+            con.execute(
+                "INSERT OR REPLACE INTO files(path, lang, mtime, size) VALUES (?,?,?,?)",
+                params![e.path, e.lang, e.mtime, e.size],
+            )?;
+            for s in sorted_symbols(&e.symbols) {
+                con.execute(
+                    "INSERT INTO symbols(file, name, kind, line, end_line, signature, doc) \
+                     VALUES (?,?,?,?,?,?,?)",
+                    params![s.file, s.name, s.kind, s.line, s.end_line, s.signature, s.doc],
+                )?;
+                con.execute(
+                    "INSERT INTO fts(name, sig, doc, path, line, kind) VALUES (?,?,?,?,?,?)",
+                    params![s.name, s.signature, s.doc, s.file, s.line, s.kind],
+                )?;
+            }
+        }
+        for r in &ref_list {
+            con.execute(
+                "INSERT INTO refs(src_file, dst_name, dst_file, line) VALUES (?,?,?,?)",
+                params![r.src_file, r.dst_name, r.dst_file, r.line],
+            )?;
         }
         tx.commit()?;
         Ok(())

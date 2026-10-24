@@ -69,6 +69,7 @@ ENV_PASSTHROUGH: tuple[str, ...] = (
     "OPENAI_BASE_URL",
     "OPENAI_API_BASE",
     "OPENCODE_API_KEY",
+    "HYDE_INFERENCE_API_KEY",
     "OPENROUTER_API_KEY",
     "MOONSHOT_API_KEY",
     "DEEPSEEK_API_KEY",
@@ -367,17 +368,37 @@ def _docker_run(image: str, name: str, cfg: RunConfig) -> None:
         f"{cfg.src_host}:{cfg.src_container}",
     ]
     if cfg.cli == "opencode":
-        # The agent inside the container needs the host's opencode auth/config
-        # (provider credentials live in the host user's opencode state dir).
-        # Read-only mounts, each skipped when absent on the host. Images run as
-        # root, so the container side is /root.
-        for host_rel, container_path in (
-            (".local/share/opencode", "/root/.local/share/opencode"),
-            (".config/opencode", "/root/.config/opencode"),
-        ):
-            host_dir = Path.home() / host_rel
-            if host_dir.is_dir():
-                cmd += ["-v", f"{host_dir}:{container_path}:ro"]
+        # The agent inside the container needs: (1) the opencode binary (the eval
+        # images do not ship it), (2) the provider auth — for the hyde provider this
+        # lives in auth.json under the opencode XDG data dir, plus the API key env,
+        # and (3) the provider config. All host paths are mounted read-only; absent
+        # dirs are skipped. Container runs as root → /root defaults.
+        host = Path.home()
+        mounts: tuple[tuple[Path, str], ...] = (
+            (
+                host / ".opencode/bin/opencode",
+                "/usr/local/bin/opencode",
+            ),
+            (
+                host / ".hyde-opencode/data/opencode",
+                "/root/.local/share/opencode",
+            ),
+            (
+                host / ".hyde-opencode/config/opencode",
+                "/root/.config/opencode",
+            ),
+            (
+                host / ".local/share/opencode",
+                "/root/.local/share/opencode-fallback",
+            ),
+            (
+                host / ".config/opencode",
+                "/root/.config/opencode-fallback",
+            ),
+        )
+        for host_path, container_path in mounts:
+            if host_path.is_file() or host_path.is_dir():
+                cmd += ["-v", f"{host_path}:{container_path}:ro"]
     for key in ENV_PASSTHROUGH:
         if os.environ.get(key):
             cmd += ["-e", key]

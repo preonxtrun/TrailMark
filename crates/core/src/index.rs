@@ -142,27 +142,34 @@ pub fn update(
     let scanned = scanner::scan(&root_str, &langs_list);
     let scanned_rels: HashSet<&str> = scanned.iter().map(|f| f.rel.as_str()).collect();
 
+    // Move the cached file map out of `cached` (no per-entry clones): entries
+    // matching the scan stay in place, everything else is replaced or dropped.
+    let IndexData {
+        root: _,
+        files: mut files,
+        refs: cached_ref_list,
+    } = cached;
+
     let mut changed: Vec<&ScannedFile> = Vec::new();
-    let mut keep: BTreeMap<String, FileEntry> = BTreeMap::new();
     for f in &scanned {
-        match cached.files.get(&f.rel) {
-            Some(old) if old.mtime == f.mtime && old.size == f.size && old.lang == f.lang => {
-                keep.insert(f.rel.clone(), old.clone());
-            }
+        match files.get(&f.rel) {
+            Some(old) if old.mtime == f.mtime && old.size == f.size && old.lang == f.lang => {}
             _ => changed.push(f),
         }
     }
-    let removed: Vec<String> = cached
-        .files
+    // entries absent from the current scan were deleted on disk
+    let removed: Vec<String> = files
         .keys()
         .filter(|rel| !scanned_rels.contains(rel.as_str()))
         .cloned()
         .collect();
+    for rel in &removed {
+        files.remove(rel);
+    }
 
     let changed_owned: Vec<ScannedFile> = changed.iter().map(|f| (*f).clone()).collect();
     let parses = parse_files(&root_str, &changed_owned, workers);
 
-    let mut new_files: BTreeMap<String, FileEntry> = BTreeMap::new();
     let mut new_refs: HashMap<String, Vec<Ref>> = HashMap::new();
     for f in &changed_owned {
         let (_p_lang, mut symbols, refs) = parses
@@ -170,7 +177,8 @@ pub fn update(
             .cloned()
             .unwrap_or_else(|| (f.lang.clone(), Vec::new(), Vec::new()));
         sort_symbols(&mut symbols);
-        new_files.insert(
+        new_refs.insert(f.rel.clone(), refs);
+        files.insert(
             f.rel.clone(),
             FileEntry {
                 path: f.rel.clone(),
@@ -180,28 +188,20 @@ pub fn update(
                 symbols,
             },
         );
-        new_refs.insert(f.rel.clone(), refs);
-    }
-
-    let mut files = keep;
-    for (k, v) in &new_files {
-        files.insert(k.clone(), v.clone());
     }
 
     // Cached refs survive for unchanged files; stale targets (deleted/renamed)
     // are filtered, unresolved module-path refs are re-matched against the
     // fresh index.
+    let changed_rels: HashSet<&str> = changed_owned.iter().map(|f| f.rel.as_str()).collect();
     let mut cached_refs: HashMap<String, Vec<Ref>> = HashMap::new();
-    for r in &cached.refs {
-        if files.contains_key(&r.src_file) && !new_files.contains_key(&r.src_file) {
-            cached_refs
-                .entry(r.src_file.clone())
-                .or_default()
-                .push(r.clone());
+    for r in cached_ref_list {
+        if files.contains_key(&r.src_file) && !changed_rels.contains(r.src_file.as_str()) {
+            cached_refs.entry(r.src_file.clone()).or_default().push(r);
         }
     }
-    for (k, v) in &new_refs {
-        cached_refs.insert(k.clone(), v.clone());
+    for (k, v) in new_refs {
+        cached_refs.insert(k, v);
     }
     let refs = resolve_refs(
         &cached_refs,
@@ -214,25 +214,21 @@ pub fn update(
         &read_go_module(&root_str),
     );
 
-    // Persist the delta: removed + changed files are deleted, then the changed
-    // files are re-inserted with their (freshly parsed) refs.
-    if !removed.is_empty() || !new_files.is_empty() {
-        let mut paths: Vec<String> = removed;
-        paths.extend(new_files.keys().cloned());
-        if let Err(e) = cache.remove_files(&paths) {
-            eprintln!("codegraph: cache removal failed: {e}");
-        }
-    }
-    if !new_files.is_empty() {
-        let entries: Vec<FileEntry> = new_files.values().cloned().collect();
+    // Persist the delta in one transaction: removed + changed files are
+    // deleted, the changed files are re-inserted with their freshly parsed refs.
+    if !removed.is_empty() || !changed_owned.is_empty() {
+        let entries: Vec<FileEntry> = changed_owned
+            .iter()
+            .filter_map(|f| files.get(&f.rel).cloned())
+            .collect();
         let mut flat_refs: Vec<Ref> = Vec::new();
-        for rel in new_files.keys() {
-            if let Some(list) = new_refs.get(rel) {
+        for f in &changed_owned {
+            if let Some(list) = cached_refs.get(&f.rel) {
                 flat_refs.extend(list.iter().cloned());
             }
         }
-        if let Err(e) = cache.upsert_files(&entries, &flat_refs) {
-            eprintln!("codegraph: cache upsert failed: {e}");
+        if let Err(e) = cache.apply_delta(&removed, &entries, &flat_refs) {
+            eprintln!("codegraph: cache update failed: {e}");
         }
     }
 

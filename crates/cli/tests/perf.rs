@@ -119,10 +119,33 @@ fn perf_targets_on_4001_files() {
     let issue = "fix the shared_api computation for pkg00 module extra";
     let t2 = Instant::now();
     let cached = cache.load().expect("cache present");
+    let t_load = t2.elapsed();
+    let t3 = Instant::now();
     let leads = rank(&cached, &cache, issue, 5);
+    let t_rank = t3.elapsed();
+    let t4 = Instant::now();
     let body = assemble(&cached, Some(issue), "generic", 2048);
+    let t_asm = t4.elapsed();
     assert!(!body.is_empty());
     let focus = t2.elapsed();
+    println!(
+        "[prof] focus phases: load {:.3}ms, rank {:.3}ms, assemble {:.3}ms",
+        t_load.as_secs_f64() * 1e3,
+        t_rank.as_secs_f64() * 1e3,
+        t_asm.as_secs_f64() * 1e3
+    );
+    let t5 = Instant::now();
+    let _ = codegraph_core::pagerank(&cached, 0.85, 30, None);
+    println!("[prof] pagerank alone: {:.3}ms", t5.elapsed().as_secs_f64() * 1e3);
+    let t5 = Instant::now();
+    let _ = codegraph_core::pagerank(&cached, 0.85, 1, None);
+    println!("[prof] pagerank iters=1 (fixed cost + 1 iter): {:.3}ms", t5.elapsed().as_secs_f64() * 1e3);
+    let t5 = Instant::now();
+    let _ = codegraph_core::pagerank(&cached, 0.85, 0, None);
+    println!("[prof] pagerank iters=0 (fixed cost only): {:.3}ms", t5.elapsed().as_secs_f64() * 1e3);
+    let t6 = Instant::now();
+    let _ = cache.search("shared_api computation pkg00", 64).unwrap();
+    println!("[prof] cache.search alone: {:.3}ms", t6.elapsed().as_secs_f64() * 1e3);
     println!(
         "[perf] focus (load+rank+assemble, {} leads, {} B body): {:.3}ms",
         leads.len(),
@@ -196,6 +219,7 @@ fn warm_update_profile() {
         cache.upsert_files(std::slice::from_ref(&entry), &refs).unwrap();
         println!("[prof] remove+upsert (1 file): {:.3}ms", t.elapsed().as_secs_f64()*1e3);
     }
+
 
     // resolve floor: resolve_refs over all cached refs
     let t = Instant::now();

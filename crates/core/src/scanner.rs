@@ -268,7 +268,8 @@ pub fn scan(root: &str, langs: &[String]) -> Vec<ScannedFile> {
             Some(l) => l,
             None => continue,
         };
-        let meta = match fs::metadata(&path) {
+        // the ignore walker already stat'ed the entry; reuse its metadata
+        let meta = match entry.metadata() {
             Ok(m) => m,
             Err(_) => continue,
         };
