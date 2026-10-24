@@ -165,6 +165,27 @@ Then fill the Gen-N entry above from `bench.report` output and commit.
 - **verdict**: the exotic pack moved bugfix from −6%-plateau (Gen 0.2, polluted) to −89% (clean). Mechanism per damage analysis: contracts+snippets displaced the early exploration reads (the top-3 damage items = 56% of run cost), bounded tests capped output replay, probes enforced one-call verify cycles.
 - **next**: Rust parity for new sections → binary swap → Trailmark rename → trails auto-deposit.
 
+## Gen 1.1 — full exotic layer on the feature suite: plateau BROKEN
+
+- **date**: 2026-10-25 · **commit**: `post-ccb993f` (contracts+snippets+linemap+clearance+scratchpad+probes+escalation, treatment-only rerun)
+- **protocol**: standing Gen 0.2 controls REUSED (layer-independent); treatment rerun with
+  `--max-turns 40` ceiling + `--verify` outcome gating (pytest provisioned in the clone)
+- **result** (per task, control → treatment):
+  - feat-onrequest-hook: 2,476,531 tok / 53 turns → **683,162 / 17** = −72% tok, −68% turns
+  - feat-verify-precedence: 1,290,240 / 42 → **542,347 / 14** = −58% tok, −67% turns
+  - feat-retries: control tainted (excluded) → 535,309 / 27
+  - **valid-pair total: 3,766,771 → 1,225,509 = −67% tokens** (Gen 0.2: −6%)
+- **quality**: verified-solve **100%** — every patch passed the full requests test suite
+  (619–625 passed, 0 failed) under `--verify` gating. No compromise.
+- **mechanism attribution** (damage-ranked analyzer): contracts+snippets displaced the early
+  exploration reads (Gen 0.2 top-3 damage = 1.38M); probes+scratchpad compressed the
+  edit-verify tail (53→17 turns on the worst runaway); bounded test commands capped output
+  replay; the 40-turn ceiling backstopped the tail.
+- **verdict**: **KEEP ALL**. The full scoreboard: orientation −54%, bugfix −89% (equal work),
+  features −67% (verified). The layer is cost-effective on every task class measured.
+- **next**: real-workflow adoption (user), SWE-bench lite standard check (opt-in, heavy),
+  Rust baseline-snapshot port (minor, python-only feature), publish prep.
+
 ## Iteration backlog (from the v0 baseline datapoint)
 
 First real control run (no trailmark, `req-redirect-cookies`): **89 turns, 250K input +
