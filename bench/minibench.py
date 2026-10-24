@@ -171,13 +171,79 @@ def run_with_timeout(
         return stdout, stderr, -9
 
 
-def run_agent(repo: Path, statement: str, model: str, timeout: int) -> tuple[str, int]:
+def run_agent(
+    repo: Path, statement: str, model: str, timeout: int, max_turns: int | None = None
+) -> tuple[str, int]:
+    """Run opencode headless with an enforceable TURN budget (turn-control policy).
+
+    Counts `step_finish` events in the JSON stream; at max_turns the whole process
+    group is killed (arXiv 2510.16786: fixed turn limits cut cost 24-68% with
+    minimal solve impact). A turn-capped run is a completed measurement, not an
+    error — it caps the 100+-turn runaway trajectories that dominate token cost.
+    """
+    import os
+    import signal
+    import threading
+
     cmd = (
         f"opencode run --standalone --format json --auto"
         f" --model {json.dumps(model)} {json.dumps(statement)}"
     )
-    stdout, _stderr, rc = run_with_timeout(cmd, str(repo), timeout)
-    return stdout, rc
+    proc = subprocess.Popen(
+        cmd,
+        shell=True,
+        cwd=str(repo),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,  # merge: no pipe deadlock; parser skips non-JSON
+        text=True,
+        errors="replace",
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + timeout
+    killed = {"reason": ""}
+
+    def watchdog() -> None:
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+        if proc.poll() is None:
+            killed["reason"] = "timeout"
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
+
+    threading.Thread(target=watchdog, daemon=True).start()
+
+    out_lines: list[str] = []
+    turns = 0
+    assert proc.stdout is not None
+    try:
+        for line in proc.stdout:
+            out_lines.append(line)
+            if max_turns and '"type":"step_finish"' in line:
+                turns += 1
+                if turns >= max_turns:
+                    killed["reason"] = "turn-limit"
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        proc.kill()
+                    break
+    finally:
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+    output = "".join(out_lines)
+    rc = proc.returncode if proc.returncode is not None else -9
+    if killed["reason"] == "turn-limit":
+        rc = 0  # turn-capped = completed measurement
+    return output, rc
 
 
 def ensure_worktrees(repo: Path, out_dir: Path, count: int) -> list[Path]:
@@ -222,6 +288,12 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--budget", type=int, default=2048)
     parser.add_argument("--timeout", type=int, default=900, help="per agent run, seconds")
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=None,
+        help="turn-control policy: kill the agent at N completed steps (cost ceiling)",
+    )
     parser.add_argument(
         "--core",
         choices=("python", "rust"),
