@@ -7,4 +7,4 @@ pub mod ranker;
 
 pub use outlines::{generate_for, generate_top, outline_posix, outline_text};
 pub use plan::render_plan;
-pub use ranker::{issue_tokens, rank, Lead};
+pub use ranker::{issue_tokens, rank, rank_and_prior, Lead};

@@ -81,6 +81,21 @@ pub fn issue_tokens(issue: &str) -> Vec<String> {
     tokens
 }
 
+/// `needle in hay.to_lowercase()` without the allocation (ASCII paths).
+fn contains_ignore_case(hay: &str, needle: &str) -> bool {
+    let h = hay.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || h.len() < n.len() {
+        return false;
+    }
+    (0..=h.len() - n.len()).any(|i| {
+        h[i..i + n.len()]
+            .iter()
+            .zip(n)
+            .all(|(x, y)| x.eq_ignore_ascii_case(y))
+    })
+}
+
 /// Min-max normalize `values` into [0, 1]; `degenerate` when hi == lo (or single).
 fn minmax(values: &HashMap<String, f64>) -> HashMap<String, f64> {
     if values.is_empty() {
@@ -128,7 +143,7 @@ fn test_proximity(data: &IndexData, tokens: &[String]) -> HashMap<String, f64> {
     let mut test_paths: Vec<&String> = data
         .files
         .keys()
-        .filter(|p| p.to_lowercase().contains("test"))
+        .filter(|p| contains_ignore_case(p, "test"))
         .collect();
     test_paths.sort();
     if test_paths.is_empty() {
@@ -272,8 +287,21 @@ fn best_symbol(
 /// [0, 1]. Files without symbols are skipped as leads (no line anchor possible)
 /// but still participate in normalization.
 pub fn rank(data: &IndexData, cache: &IndexCache, issue: &str, k: usize) -> Vec<Lead> {
+    rank_and_prior(data, cache, issue, k).0
+}
+
+/// [`rank`] plus the plain (unpersonalized) pagerank prior it computed — the
+/// focus path reuses those scores for the atlas block instead of running the
+/// same power iteration again. Values are identical to
+/// `codegraph_core::pagerank(data, 0.85, 30, None)`.
+pub fn rank_and_prior(
+    data: &IndexData,
+    cache: &IndexCache,
+    issue: &str,
+    k: usize,
+) -> (Vec<Lead>, HashMap<String, f64>) {
     if k == 0 || data.files.is_empty() {
-        return vec![];
+        return (vec![], HashMap::new());
     }
     let tokens = issue_tokens(issue);
 
@@ -341,8 +369,10 @@ pub fn rank(data: &IndexData, cache: &IndexCache, issue: &str, k: usize) -> Vec<
     }
     let lex_norm = minmax(&lex_raw);
 
-    let graph = pagerank(data, 0.85, 30, personalization.as_ref());
-    let prior = pagerank(data, 0.85, 30, None);
+    // one shared edge build powers both the personalized and the plain run
+    let (graph, prior) =
+        codegraph_core::graph::pagerank_pair(data, 0.85, 30, personalization.as_ref(), None);
+    let prior_out = prior.clone();
 
     let graph_norm = minmax(
         &candidates
@@ -395,7 +425,7 @@ pub fn rank(data: &IndexData, cache: &IndexCache, issue: &str, k: usize) -> Vec<
             score,
         });
     }
-    leads
+    (leads, prior_out)
 }
 
 #[cfg(test)]

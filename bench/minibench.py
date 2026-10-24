@@ -84,15 +84,48 @@ def arm_setup(repo: Path, arm: str, statement: str, model: str, budget: int) -> 
         raise RuntimeError(f"codegraph focus failed rc={rc}")
 
 
+def run_with_timeout(
+    cmd: str, cwd: str, timeout: int, env: dict[str, str] | None = None
+) -> tuple[str, str, int]:
+    """Run *cmd* in its own process group; on timeout, kill the WHOLE group.
+
+    Why not ``subprocess.run(timeout=...)``: with ``shell=True`` the timeout kills
+    only the wrapping ``sh``, while the actual agent keeps the stdout pipe open —
+    the runner then hangs forever despite its timeout. Process groups make the
+    budget enforceable (guarantee: a run can never outlive its slot).
+    """
+    import os
+    import signal
+
+    proc = subprocess.Popen(
+        cmd,
+        shell=True,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env=env,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return stdout, stderr, proc.returncode or 0
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        stdout, stderr = proc.communicate()
+        return stdout, stderr, -9
+
+
 def run_agent(repo: Path, statement: str, model: str, timeout: int) -> tuple[str, int]:
     cmd = (
         f"opencode run --standalone --format json --auto"
         f" --model {json.dumps(model)} {json.dumps(statement)}"
     )
-    proc = subprocess.run(
-        cmd, shell=True, check=False, cwd=str(repo), capture_output=True, text=True, timeout=timeout
-    )
-    return proc.stdout, proc.returncode
+    stdout, stderr, rc = run_with_timeout(cmd, str(repo), timeout)
+    return stdout, rc
 
 
 def load_tasks(tasks_file: Path, limit: int | None) -> list[dict]:

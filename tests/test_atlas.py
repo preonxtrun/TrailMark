@@ -330,34 +330,36 @@ def test_pack_empty_budget():
 # -- rules (flight rules content) --------------------------------------------------
 
 
-def test_rules_variants_present_and_mutually_different():
-    texts = {v: rules.flight_rules(v) for v in rules.VARIANTS}
-    for variant, text in texts.items():
-        assert text == rules.flight_rules(variant)  # deterministic
-        assert 400 <= byte_len(text) <= 900  # "wrapped tight, ~700 bytes"
-        assert max(len(line) for line in text.split("\n")) <= rules.WRAP_WIDTH + 2
-    assert len({tuple(sorted(texts.items()))}) == 1  # deterministic per variant
-    assert len(set(texts.values())) == 3  # mutually different
+def test_rules_single_agnostic_variant():
+    """G9 contract: one rules text, byte-identical for every CLI, no harness vocabulary."""
+    texts = {cli: rules.flight_rules(cli) for cli in ("claude", "codex", "opencode", "generic", "unknown")}
+    assert len(set(texts.values())) == 1, "rules must NOT fork per CLI"
+    text = next(iter(texts.values()))
+    assert text == rules.flight_rules("whatever")  # deterministic
+    assert 400 <= byte_len(text) <= 900
+    assert max(len(line) for line in text.split("\n")) <= rules.WRAP_WIDTH + 2
+    lowered = text.lower()
+    for term in ("mcp", "subagent", "sub-agent", "parallel tool", "claude", "codex", "opencode"):
+        assert term not in lowered, f"harness vocabulary {term!r} leaked into rules"
     for snippet in (
-        "Consult MAP/TESTS before any grep",
-        "Batch all candidate file reads",
+        "Consult MAP/TESTS before any search",
+        "as few requests as possible",
         "Run the exact test target from TESTS",
         "Persist probes to one scratch file",
         "Stop-loss: after 2 failed searches",
     ):
-        assert snippet in texts["generic"]
-    assert "subagent" in texts["claude"]
-    assert "sed -n" in texts["shell"]
+        assert snippet in text
+    assert rules.compact_rules("claude") == rules.compact_rules("shell") == rules.compact_rules("x")
 
 
 def test_rules_cli_mapping():
-    assert rules.resolve_variant("claude") == "claude"
-    assert rules.resolve_variant("codex") == "shell"
-    assert rules.resolve_variant("opencode") == "shell"
-    assert rules.resolve_variant("generic") == "generic"
+    """Every CLI resolves to the single agnostic variant; assemble ignores cli for RULES."""
+    assert rules.resolve_variant("claude") == "generic"
+    assert rules.resolve_variant("codex") == "generic"
+    assert rules.resolve_variant("opencode") == "generic"
     assert rules.resolve_variant("unknown-cli") == "generic"
     data = make_data()
-    assert assemble(data, None, "claude", 4096) != assemble(data, None, "generic", 4096)
+    assert assemble(data, None, "claude", 4096) == assemble(data, None, "generic", 4096)
 
 
 # -- glossary -----------------------------------------------------------------------

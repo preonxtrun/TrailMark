@@ -1,13 +1,15 @@
-"""Flight rules: fixed hand-written bullet lists with per-CLI variants (SPEC-frozen text).
+"""Flight rules: ONE fixed, CLI-agnostic hand-written bullet list (SPEC-frozen text).
 
-Three variants exist — ``generic`` / ``claude`` / ``shell``. The wrapper is
-deterministic, so the same variant always renders byte-identically (~700 bytes
-wrapped for the claude/shell variants, tighter for generic).
+The layer is agnostic by contract: the same rules ship to every coding CLI, phrased
+only in terms every agent can follow (files, line ranges, tests, searches) — never
+tool names, vendor features, or runtime mechanisms. ``flight_rules(cli)`` accepts a
+cli name for API compatibility but does NOT fork behavior: the rules are identical
+for every CLI.
 
-A one-line :data:`COMPACT_RULES` fallback per variant exists for tight budgets:
-below roughly 900 bytes the full wrapped text cannot coexist with the guaranteed
-MAP floor (invariant #2), so the packer swaps to the compact line while keeping
-the RULES section present.
+A one-line :data:`COMPACT_RULES` fallback exists for tight budgets: below roughly
+900 bytes the full wrapped text cannot coexist with the guaranteed MAP floor
+(invariant #2), so the packer swaps to the compact line while keeping the RULES
+section present.
 """
 
 from __future__ import annotations
@@ -17,70 +19,52 @@ from ..emit.fmt import wrap
 #: Wrap width for the full rules text (bytes).
 WRAP_WIDTH = 76
 
-#: SPEC base rules — prohibitive, turn-shaped guidance for any coding CLI.
+#: The rules — prohibitive, turn-shaped guidance phrased CLI-neutrally.
 BASE_RULES: tuple[str, ...] = (
-    "Consult MAP/TESTS before any grep; state a concrete hypothesis before each retrieval.",
+    "Consult MAP/TESTS before any search; state a concrete hypothesis before each retrieval.",
     (
-        "Batch all candidate file reads into ONE parallel tool block; use line-ranged reads"
-        " for files >200 lines; after editing, re-read only the edited range."
+        "Locate candidate files with as few requests as possible; read line ranges,"
+        " not whole files >200 lines; after editing, re-read only the edited range."
     ),
     (
         "Run the exact test target from TESTS; never rerun a test that passed with"
         " unchanged inputs."
     ),
     "Persist probes to one scratch file and edit it; never regenerate similar scripts.",
+    (
+        "When a delegated exploration returns a summary, keep its file:line references"
+        " so the same code is never retrieved twice."
+    ),
     "Stop-loss: after 2 failed searches, re-read the map — do not keep guessing.",
 )
 
-#: Extra bullet appended for specific CLI variants (SPEC).
-VARIANT_EXTRA: dict[str, str] = {
-    "claude": (
-        "Require file:line references in subagent summaries; never re-retrieve code a"
-        " subagent already covered."
-    ),
-    "shell": (
-        "One edit per change; verify with a single targeted `sed -n 'A,Bp'`; persist"
-        " probe scripts — do not regenerate variants."
-    ),
-}
-#: The three rules variants (SPEC).
-VARIANTS: tuple[str, ...] = ("generic", "claude", "shell")
+#: Kept for API compatibility; the layer ships one agnostic variant only.
+VARIANTS: tuple[str, ...] = ("generic",)
 
-# ``codegraph focus --cli`` name → rules variant. codex/opencode drive edits through
-# shell commands, so they get the shell-flavored rules; anything unknown is generic.
-_CLI_TO_VARIANT: dict[str, str] = {
-    "claude": "claude",
-    "codex": "shell",
-    "opencode": "shell",
-    "shell": "shell",
-    "generic": "generic",
-}
-
-#: One-line fallback rules for tight budgets (deterministic per variant).
+#: One-line fallback rules for tight budgets (deterministic).
 COMPACT_RULES: dict[str, str] = {
-    "generic": "Map first; batch reads; run the TESTS runner; stop-loss after 2 failed searches.",
-    "claude": "Map first; batch reads; run the TESTS runner; require file:line refs from subagents.",
-    "shell": "Map first; one edit per change; run the TESTS runner; persist probe scripts.",
+    "generic": (
+        "Map first; fewest requests possible; line-ranged reads; exact test targets;"
+        " stop-loss after 2 failed searches."
+    )
 }
 
 
 def resolve_variant(cli: str) -> str:
-    """Map a CLI name to its rules variant (unknown names fall back to ``generic``)."""
-    return _CLI_TO_VARIANT.get((cli or "").strip().lower(), "generic")
+    """Every CLI gets the one agnostic variant (kept for API compatibility)."""
+    return "generic"
 
 
-def bullet_lines(variant: str) -> list[str]:
-    """Base rules plus the variant-specific extra bullet."""
-    extra = VARIANT_EXTRA.get(variant, "")
-    return list(BASE_RULES) + ([extra] if extra else [])
+def bullet_lines(variant: str = "generic") -> list[str]:
+    """The rules bullets (single agnostic variant)."""
+    return list(BASE_RULES)
 
 
 def flight_rules(cli: str) -> str:
-    """Full wrapped flight-rules text for *cli* (deterministic, byte-stable)."""
-    variant = resolve_variant(cli)
-    return "\n".join(wrap(bullet, WRAP_WIDTH) for bullet in bullet_lines(variant))
+    """Full wrapped flight-rules text (deterministic, byte-stable, CLI-agnostic)."""
+    return "\n".join(wrap(bullet, WRAP_WIDTH) for bullet in bullet_lines())
 
 
 def compact_rules(cli: str) -> str:
     """Single-line rules fallback for very tight budgets (deterministic)."""
-    return COMPACT_RULES[resolve_variant(cli)]
+    return COMPACT_RULES["generic"]

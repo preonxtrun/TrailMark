@@ -13,6 +13,24 @@ use std::collections::{HashMap, HashSet};
 
 use codegraph_core::{truncate, IndexData, Symbol};
 
+/// Fast FNV-1a hasher for the glossary's short-string maps.
+#[derive(Default)]
+struct FnvHasher(u64);
+
+impl std::hash::Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+}
+
+type FnvMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FnvHasher>>;
+
 /// Maximum number of glossary rows.
 pub const MAX_TERMS: usize = 12;
 /// Minimum sub-token length and total frequency for a term to qualify.
@@ -42,7 +60,8 @@ pub fn tokenize(text: &str) -> Vec<String> {
         }
         for sub in subtoken_runs(part) {
             // len >= MIN_LEN (chars) and not a stopword, mirroring the reference
-            if sub.chars().count() >= MIN_LEN && !STOPWORDS.contains(&sub) { // sub: &str
+            if sub.chars().count() >= MIN_LEN && !STOPWORDS.contains(&sub) {
+                // sub: &str
                 out.push(sub.to_lowercase());
             }
         }
@@ -84,10 +103,20 @@ fn subtoken_runs(part: &str) -> Vec<&str> {
                 while j < chars.len() && chars[j].is_ascii_uppercase() {
                     j += 1;
                 }
-                while j > i + 1 && chars.get(j).copied().is_some_and(|b| b.is_ascii_lowercase()) {
+                while j > i + 1
+                    && chars
+                        .get(j)
+                        .copied()
+                        .is_some_and(|b| b.is_ascii_lowercase())
+                {
                     j -= 1;
                 }
-                if j > i && !chars.get(j).copied().is_some_and(|b| b.is_ascii_lowercase()) {
+                if j > i
+                    && !chars
+                        .get(j)
+                        .copied()
+                        .is_some_and(|b| b.is_ascii_lowercase())
+                {
                     out.push(&part[i..j]);
                     i = j;
                 } else {
@@ -121,12 +150,24 @@ fn meaning(sym: &Symbol) -> String {
 
 /// GLOSSARY entry rows for `data` (deterministic; empty when nothing qualifies).
 pub fn build_glossary(data: &IndexData, max_terms: usize) -> Vec<String> {
-    let mut freq: HashMap<String, usize> = HashMap::new();
-    let mut file_sets: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut freq: FnvMap<String, usize> = FnvMap::default();
+    // term -> distinct file indices (only the count feeds the score, so
+    // indices instead of cloned paths)
+    let mut file_sets: FnvMap<String, HashSet<usize>> = FnvMap::default();
     // term -> (hits in symbol, exemplar): most occurrences first, ties broken
     // by (path, line, name) — invariant #1.
-    let mut best: HashMap<String, (usize, Symbol)> = HashMap::new();
+    // exemplars are borrowed; only the ≤12 emitted rows clone a Symbol
+    let mut best: FnvMap<String, (usize, &Symbol)> = FnvMap::default();
+    // distinct-file counting must be per PATH (a file with several matching
+    // symbols still counts once), so index the map keys
+    let file_index: HashMap<&str, usize> = data
+        .files
+        .keys()
+        .enumerate()
+        .map(|(i, k)| (k.as_str(), i))
+        .collect();
     for sym in data.files.values().flat_map(|f| f.symbols.iter()) {
+        let file_idx = file_index[sym.file.as_str()];
         // name and signature are tokenized separately — the reference joins
         // them with a space, which the tokenizer treats as a boundary anyway
         let mut tokens = tokenize(&sym.name);
@@ -134,19 +175,22 @@ pub fn build_glossary(data: &IndexData, max_terms: usize) -> Vec<String> {
         if tokens.is_empty() {
             continue;
         }
-        // Counter(tokens): per-symbol token counts
-        let mut counts: HashMap<&str, usize> = HashMap::new();
+        // Counter(tokens): per-symbol token counts (tiny n → linear Vec)
+        let mut counts: Vec<(&str, usize)> = Vec::with_capacity(tokens.len());
         for t in &tokens {
-            *counts.entry(t.as_str()).or_insert(0) += 1;
+            if let Some(slot) = counts.iter_mut().find(|(w, _)| *w == t.as_str()) {
+                slot.1 += 1;
+            } else {
+                counts.push((t.as_str(), 1));
+            }
         }
         for (word, n) in counts {
-            let word = word.to_string();
-            *freq.entry(word.clone()).or_insert(0) += n;
+            *freq.entry(word.to_string()).or_insert(0) += n;
             file_sets
-                .entry(word.clone())
+                .entry(word.to_string())
                 .or_default()
-                .insert(sym.file.clone());
-            let cur = best.get(&word);
+                .insert(file_idx);
+            let cur = best.get(word);
             let replace = match cur {
                 None => true,
                 Some((cn, csym)) => {
@@ -157,7 +201,7 @@ pub fn build_glossary(data: &IndexData, max_terms: usize) -> Vec<String> {
                 }
             };
             if replace {
-                best.insert(word, (n, sym.clone()));
+                best.insert(word.to_string(), (n, sym));
             }
         }
     }
@@ -179,7 +223,7 @@ pub fn build_glossary(data: &IndexData, max_terms: usize) -> Vec<String> {
 
     let mut rows = Vec::new();
     for (_score, _f, term) in scored.iter().take(max_terms) {
-        let (_n, sym) = &best[term];
+        let (_n, sym) = best[term.as_str()];
         rows.push(format!(
             "- {term} = {} ({}:{})",
             meaning(sym),

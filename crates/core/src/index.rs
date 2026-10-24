@@ -144,11 +144,8 @@ pub fn update(
 
     // Move the cached file map out of `cached` (no per-entry clones): entries
     // matching the scan stay in place, everything else is replaced or dropped.
-    let IndexData {
-        root: _,
-        files: mut files,
-        refs: cached_ref_list,
-    } = cached;
+    let mut files = cached.files;
+    let cached_ref_list = cached.refs;
 
     let mut changed: Vec<&ScannedFile> = Vec::new();
     for f in &scanned {

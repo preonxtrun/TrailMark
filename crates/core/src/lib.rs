@@ -14,7 +14,7 @@ pub mod scanner;
 pub use cache::{CodegraphError, Hit, IndexCache};
 pub use emit::{read_block, remove_block, render, write_block, AGENTS_FILENAME};
 pub use fmt::{byte_len, estimate_tokens, truncate, wrap, wrap_default};
-pub use graph::pagerank;
+pub use graph::{pagerank, pagerank_pair};
 pub use index::{build, norm_langs, update};
 pub use model::{FileEntry, IndexData, Ref, Symbol, BLOCK_END, BLOCK_START, DEFAULT_BUDGET_BYTES};
 pub use parser::{parse_files, read_go_module, resolve_refs, MAX_REFS_PER_FILE};

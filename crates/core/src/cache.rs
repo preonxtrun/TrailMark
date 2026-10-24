@@ -61,22 +61,6 @@ pub enum CodegraphError {
     Path(PathBuf),
 }
 
-/// Fast FNV-1a hasher for internal short-string maps (hot per-row lookups).
-#[derive(Default)]
-pub(crate) struct FnvHasher(u64);
-
-impl std::hash::Hasher for FnvHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 ^= u64::from(b);
-            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-}
-
 /// True when an existing fts table predates the line/kind columns.
 fn fts_outdated(con: &Connection) -> bool {
     let mut stmt = match con.prepare("PRAGMA table_info(fts)") {
@@ -137,90 +121,117 @@ impl IndexCache {
     // -- persistence ---------------------------------------------------------
 
     /// Load the cached index, or None if absent/corrupt.
+    ///
+    /// The three tables are materialized in parallel on separate read-only
+    /// connections (the row→struct conversion dominates, not the SQL), then
+    /// merged in path order — the on-disk insert order is path-sorted, so the
+    /// merge reproduces the Python reference's per-file symbol order exactly
+    /// (`(line, name)` within each file).
     pub fn load(&self) -> Option<IndexData> {
+        use std::thread;
         if !self.db_path.exists() {
             return None;
         }
-        let con = self.read_only().ok()?;
-        // FNV + capacity reservations: 20k+ rows stream through here on every
-        // focus/update; SipHash and rehashing dominate otherwise.
-        let mut files: std::collections::HashMap<
-            String,
-            FileEntry,
-            std::hash::BuildHasherDefault<FnvHasher>,
-        > = std::collections::HashMap::with_capacity(1024);
-        {
-            let mut stmt = con
-                .prepare("SELECT path, lang, mtime, size FROM files")
-                .ok()?;
-            let mut rows = stmt.query([]).ok()?;
-            while let Ok(Some(row)) = rows.next() {
-                let path: String = row.get(0).ok()?;
-                let lang: String = row.get(1).ok()?;
-                let mtime: f64 = row.get(2).ok()?;
-                let size: i64 = row.get(3).ok()?;
-                files.insert(
-                    path.clone(),
-                    FileEntry {
-                        path,
-                        lang,
-                        mtime,
-                        size: size.max(0) as u64,
+        thread::scope(|scope| {
+            let files_handle = scope.spawn(|| {
+                let con = self.read_only().ok()?;
+                let mut out: Vec<FileEntry> = Vec::with_capacity(1024);
+                let mut stmt = con
+                    .prepare("SELECT path, lang, mtime, size FROM files")
+                    .ok()?;
+                let mut rows = stmt.query([]).ok()?;
+                while let Ok(Some(row)) = rows.next() {
+                    out.push(FileEntry {
+                        path: row.get(0).ok()?,
+                        lang: row.get(1).ok()?,
+                        mtime: row.get(2).ok()?,
+                        size: (row.get::<_, i64>(3).ok()?).max(0) as u64,
                         symbols: Vec::new(),
-                    },
-                );
-            }
-        }
-        {
-            let mut stmt = con
-                .prepare("SELECT file, name, kind, line, end_line, signature, doc FROM symbols")
-                .ok()?;
-            let mut rows = stmt.query([]).ok()?;
-            while let Ok(Some(row)) = rows.next() {
-                let file: String = row.get(0).ok()?;
-                let name: String = row.get(1).ok()?;
-                let kind: String = row.get(2).ok()?;
-                let line: i64 = row.get(3).ok()?;
-                let end_line: i64 = row.get(4).ok()?;
-                let signature: String = row.get(5).ok()?;
-                let doc: String = row.get(6).ok()?;
-                if let Some(entry) = files.get_mut(&file) {
-                    entry.symbols.push(Symbol {
-                        file,
-                        name,
-                        kind,
-                        line: line.max(0) as u32,
-                        end_line: end_line.max(0) as u32,
-                        signature,
-                        doc,
                     });
                 }
+                Some(out)
+            });
+            // natural rowid order is file-grouped and path-ascending (the
+            // writer inserts per path in (line, name) order) — the same order
+            // the Python reference relies on when loading, so a two-pointer
+            // merge reproduces it exactly
+            let symbols_handle = scope.spawn(|| {
+                let con = self.read_only().ok()?;
+                let mut out: Vec<Symbol> = Vec::with_capacity(1024);
+                let mut stmt = con
+                    .prepare("SELECT file, name, kind, line, end_line, signature, doc FROM symbols")
+                    .ok()?;
+                let mut rows = stmt.query([]).ok()?;
+                while let Ok(Some(row)) = rows.next() {
+                    out.push(Symbol {
+                        file: row.get(0).ok()?,
+                        name: row.get(1).ok()?,
+                        kind: row.get(2).ok()?,
+                        line: (row.get::<_, i64>(3).ok()?).max(0) as u32,
+                        end_line: (row.get::<_, i64>(4).ok()?).max(0) as u32,
+                        signature: row.get(5).ok()?,
+                        doc: row.get(6).ok()?,
+                    });
+                }
+                Some(out)
+            });
+            let refs_handle = scope.spawn(|| {
+                let con = self.read_only().ok()?;
+                let mut out: Vec<Ref> = Vec::with_capacity(1024);
+                let mut stmt = con
+                    .prepare("SELECT src_file, dst_name, dst_file, line FROM refs")
+                    .ok()?;
+                let mut rows = stmt.query([]).ok()?;
+                while let Ok(Some(row)) = rows.next() {
+                    out.push(Ref {
+                        src_file: row.get(0).ok()?,
+                        dst_name: row.get(1).ok()?,
+                        dst_file: row.get(2).ok()?,
+                        line: (row.get::<_, i64>(3).ok()?).max(0) as u32,
+                    });
+                }
+                Some(out)
+            });
+
+            let mut file_list = files_handle.join().ok()??;
+            let symbols = symbols_handle.join().ok()??;
+            let refs = refs_handle.join().ok()??;
+
+            // two-pointer merge: `file_list` is path-ordered (rowid order) and
+            // `symbols` is file-grouped in the same byte order — rows are
+            // MOVED into their entry (no per-row clone)
+            let mut files: std::collections::BTreeMap<String, FileEntry> =
+                std::collections::BTreeMap::new();
+            let mut sym_iter = symbols.into_iter();
+            let mut pending = sym_iter.next();
+            for entry in file_list.drain(..) {
+                let mut owned = entry;
+                // drop symbol rows for paths absent from the `files` table
+                while let Some(sym) = pending.as_ref() {
+                    if sym.file.as_str() < owned.path.as_str() {
+                        pending = sym_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                while let Some(sym) = pending.as_ref() {
+                    if sym.file == owned.path {
+                        owned.symbols.push(pending.take().expect("pending symbol"));
+                        pending = sym_iter.next();
+                    } else {
+                        break;
+                    }
+                }
+                files.insert(owned.path.clone(), owned);
             }
-        }
-        let mut refs: Vec<Ref> = Vec::with_capacity(1024);
-        {
-            let mut stmt = con
-                .prepare("SELECT src_file, dst_name, dst_file, line FROM refs")
-                .ok()?;
-            let mut rows = stmt.query([]).ok()?;
-            while let Ok(Some(row)) = rows.next() {
-                refs.push(Ref {
-                    src_file: row.get(0).ok()?,
-                    dst_name: row.get(1).ok()?,
-                    dst_file: row.get(2).ok()?,
-                    line: (row.get::<_, i64>(3).ok()?).max(0) as u32,
-                });
-            }
-        }
-        let root: String = con
-            .query_row("SELECT value FROM meta WHERE key='root'", [], |row| {
-                row.get(0)
-            })
-            .unwrap_or_default();
-        Some(IndexData {
-            root,
-            files: files.into_iter().collect(),
-            refs,
+            let root: String = {
+                let con = self.read_only().ok()?;
+                con.query_row("SELECT value FROM meta WHERE key='root'", [], |row| {
+                    row.get(0)
+                })
+                .unwrap_or_default()
+            };
+            Some(IndexData { root, files, refs })
         })
     }
 
@@ -449,7 +460,10 @@ impl IndexCache {
         entries: &[FileEntry],
         refs: &[Ref],
     ) -> Result<(), CodegraphError> {
-        let mut paths: Vec<&String> = removed.iter().chain(entries.iter().map(|e| &e.path)).collect();
+        let mut paths: Vec<&String> = removed
+            .iter()
+            .chain(entries.iter().map(|e| &e.path))
+            .collect();
         paths.sort();
         paths.dedup();
         if paths.is_empty() {
@@ -503,7 +517,15 @@ impl IndexCache {
                 con.execute(
                     "INSERT INTO symbols(file, name, kind, line, end_line, signature, doc) \
                      VALUES (?,?,?,?,?,?,?)",
-                    params![s.file, s.name, s.kind, s.line, s.end_line, s.signature, s.doc],
+                    params![
+                        s.file,
+                        s.name,
+                        s.kind,
+                        s.line,
+                        s.end_line,
+                        s.signature,
+                        s.doc
+                    ],
                 )?;
                 con.execute(
                     "INSERT INTO fts(name, sig, doc, path, line, kind) VALUES (?,?,?,?,?,?)",

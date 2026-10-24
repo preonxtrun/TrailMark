@@ -336,22 +336,40 @@ def _exec(
     workdir: str | None = None,
     stdin_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """``docker exec sh -lc <shell_cmd>`` with output capture and a hard timeout."""
+    """``docker exec sh -lc <shell_cmd>`` with output capture and an enforceable timeout.
+
+    Uses ``start_new_session=True`` + process-group SIGKILL on timeout: plain
+    ``subprocess.run(timeout=...)`` kills only the wrapping shell while the agent
+    keeps the stdout pipe open — the runner would hang forever despite the timeout.
+    """
+    import os
+    import signal
+
     cmd = ["docker", "exec"]
     if stdin_text is not None:
         cmd.append("-i")
     if workdir:
         cmd += ["-w", workdir]
     cmd += [name, "sh", "-lc", shell_cmd]
-    return subprocess.run(
+    proc = subprocess.Popen(
         cmd,
-        input=stdin_text,
-        check=False,
-        capture_output=True,
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         errors="replace",
-        timeout=timeout,
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = proc.communicate(input=stdin_text, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        stdout, stderr = proc.communicate()
+        proc.returncode = proc.returncode or -9
+    return subprocess.CompletedProcess(cmd, proc.returncode or 0, stdout, stderr)
 
 
 def _docker_run(image: str, name: str, cfg: RunConfig) -> None:

@@ -63,16 +63,6 @@ fn bincount(idx: &[usize], weights: &[f64], n: usize) -> Vec<f64> {
 /// Fast FNV-1a hasher: the pagerank maps are short-string keyed and rebuilt on
 /// every call; SipHash's security is irrelevant for these internal structures.
 #[derive(Default)]
-struct FnvBuild;
-
-impl std::hash::BuildHasher for FnvBuild {
-    type Hasher = FnvHasher;
-    fn build_hasher(&self) -> FnvHasher {
-        FnvHasher(0xcbf2_9ce4_8422_2325)
-    }
-}
-
-#[derive(Default)]
 struct FnvHasher(u64);
 
 impl std::hash::Hasher for FnvHasher {
@@ -89,32 +79,30 @@ impl std::hash::Hasher for FnvHasher {
 
 type FnvMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FnvHasher>>;
 
-/// Compute file-level PageRank scores summing to ~1.0.
-///
-/// * `damping`: damping factor (teleport probability is `1 - damping`).
-/// * `iters`: fixed power-iteration count.
-/// * `personalization`: optional `{file: weight}` seed vector (used by focus);
-///   missing keys get weight 0. An all-zero/empty mapping falls back to uniform.
-///
-/// Dangling nodes (no out-edges) and unreachable mass are redistributed uniformly
-/// every iteration, exactly like the numpy reference implementation.
-pub fn pagerank(
-    data: &IndexData,
-    damping: f64,
-    iters: u32,
-    personalization: Option<&HashMap<String, f64>>,
-) -> HashMap<String, f64> {
+/// The personalization-independent graph structure: sorted nodes plus the
+/// sorted edge arrays. Shared by [`pagerank`] and [`pagerank_pair`].
+struct PrGraph<'a> {
+    nodes: Vec<&'a str>,
+    src_idx: Vec<usize>,
+    dst_idx: Vec<usize>,
+    flow_weight: Vec<f64>,
+    dangling_idx: Vec<usize>,
+    n: usize,
+}
+
+/// Build [`PrGraph`] (pers-independent edge build).
+fn pagerank_graph(data: &IndexData) -> PrGraph<'_> {
     let base: Vec<&str> = data.files.keys().map(|k| k.as_str()).collect();
     let base_set: FnvMap<&str, ()> = base.iter().map(|p| (*p, ())).collect();
-    let mut edge_weight: FnvMap<(&str, &str), i64> = FnvMap::default();
+    // collect resolved (src, dst) pairs; grouping the sorted pairs (duplicates
+    // kept) yields the edge weights exactly like the reference's edge dict
+    let mut pairs: Vec<(&str, &str)> = Vec::with_capacity(data.refs.len());
     let mut extra: Vec<&str> = Vec::new();
     for r in &data.refs {
         if r.src_file.is_empty() || r.dst_file.is_empty() {
             continue; // unresolved refs carry no file edge
         }
-        *edge_weight
-            .entry((r.src_file.as_str(), r.dst_file.as_str()))
-            .or_insert(0) += 1;
+        pairs.push((r.src_file.as_str(), r.dst_file.as_str()));
         if !base_set.contains_key(r.src_file.as_str()) {
             extra.push(r.src_file.as_str());
         }
@@ -122,18 +110,46 @@ pub fn pagerank(
             extra.push(r.dst_file.as_str());
         }
     }
-    // nodes = sorted(set(file keys) | extra endpoints)
     let mut nodes: Vec<&str> = base.clone();
     nodes.extend(extra);
     nodes.sort_unstable();
     nodes.dedup();
     let n = nodes.len();
-    if n == 0 {
-        return HashMap::new();
-    }
     let index: FnvMap<&str, usize> = nodes.iter().enumerate().map(|(i, p)| (*p, i)).collect();
+    pairs.sort_unstable();
+    let mut edge_weight: HashMap<(&str, &str), i64> = HashMap::new();
+    for (s, d) in pairs {
+        *edge_weight.entry((s, d)).or_insert(0) += 1;
+    }
+    let mut items: Vec<EdgeItem> = edge_weight
+        .iter()
+        .map(|(&(s, d), &w)| (index[s], index[d], w as f64))
+        .collect();
+    items.sort_by_key(|a| (a.0, a.1));
+    let src_idx: Vec<usize> = items.iter().map(|e| e.0).collect();
+    let dst_idx: Vec<usize> = items.iter().map(|e| e.1).collect();
+    let weights: Vec<f64> = items.iter().map(|e| e.2).collect();
+    let out_weight = bincount(&src_idx, &weights, n);
+    let flow_weight: Vec<f64> = items.iter().map(|e| e.2 / out_weight[e.0]).collect();
+    let dangling_idx: Vec<usize> = out_weight
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &w)| if w == 0.0 { Some(i) } else { None })
+        .collect();
+    PrGraph {
+        nodes,
+        src_idx,
+        dst_idx,
+        flow_weight,
+        dangling_idx,
+        n,
+    }
+}
 
-    let pvec: Vec<f64> = match personalization.filter(|p| !p.is_empty()) {
+/// Personalization seed vector over `nodes` (missing keys 0; all-zero → uniform).
+fn pagerank_pvec(nodes: &[&str], personalization: Option<&HashMap<String, f64>>) -> Vec<f64> {
+    let n = nodes.len();
+    match personalization.filter(|p| !p.is_empty()) {
         Some(pers) => {
             let raw: Vec<f64> = nodes
                 .iter()
@@ -154,54 +170,37 @@ pub fn pagerank(
             }
         }
         None => vec![1.0 / n as f64; n],
-    };
+    }
+}
 
-    if edge_weight.is_empty() {
-        return nodes
+/// Power iteration from `pvec` over `g` (numpy-equivalent arithmetic).
+fn pagerank_run(pvec: &[f64], g: &PrGraph<'_>, damping: f64, iters: u32) -> HashMap<String, f64> {
+    let n = g.n;
+    if g.src_idx.is_empty() {
+        return g
+            .nodes
             .iter()
-            .enumerate()
-            .map(|(i, p)| ((*p).to_string(), pvec[i]))
+            .zip(pvec.iter())
+            .map(|(p, s)| ((*p).to_string(), *s))
             .collect();
     }
-
-    // Sorted edge arrays → deterministic float summation order. (src, dst) is
-    // unique per edge, so the weight never participates in the comparison —
-    // exactly like the Python `sorted((src, dst, w))` on unique pairs.
-    let mut items: Vec<EdgeItem> = edge_weight
-        .iter()
-        .map(|(&(s, d), &w)| (index[s], index[d], w as f64))
-        .collect();
-    items.sort_by_key(|a| (a.0, a.1));
-
-    let src_idx: Vec<usize> = items.iter().map(|e| e.0).collect();
-    let dst_idx: Vec<usize> = items.iter().map(|e| e.1).collect();
-    let weights: Vec<f64> = items.iter().map(|e| e.2).collect();
-    let out_weight = bincount(&src_idx, &weights, n);
-    let flow_weight: Vec<f64> = items.iter().map(|e| e.2 / out_weight[e.0]).collect();
-    let dangling: Vec<bool> = out_weight.iter().map(|&w| w == 0.0).collect();
-
-    let mut rank = pvec.clone();
+    let mut rank = pvec.to_vec();
     // Reusable buffers: the arithmetic below is bit-identical to the numpy
     // reference — `damping*flow + damping*(dangling_mass/n) + (1-damping)*pvec`
     // with `damping_dm = damping * (dangling_mass / n)` precomputed as a scalar
     // (same expression order, same rounding).
-    let mut scaled = vec![0.0f64; items.len()];
+    let mut scaled = vec![0.0f64; g.src_idx.len()];
     let mut flow = vec![0.0f64; n];
-    let dangling_idx: Vec<usize> = dangling
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &d)| if d { Some(i) } else { None })
-        .collect();
-    let mut dangling_vals = vec![0.0f64; dangling_idx.len()];
+    let mut dangling_vals = vec![0.0f64; g.dangling_idx.len()];
     for _ in 0..iters {
-        for (k, (&s, &w)) in src_idx.iter().zip(flow_weight.iter()).enumerate() {
+        for (k, (&s, &w)) in g.src_idx.iter().zip(g.flow_weight.iter()).enumerate() {
             scaled[k] = rank[s] * w;
         }
         flow.fill(0.0);
-        for (k, &d) in dst_idx.iter().enumerate() {
+        for (k, &d) in g.dst_idx.iter().enumerate() {
             flow[d] += scaled[k];
         }
-        for (k, &i) in dangling_idx.iter().enumerate() {
+        for (k, &i) in g.dangling_idx.iter().enumerate() {
             dangling_vals[k] = rank[i];
         }
         let dangling_mass = np_sum(&dangling_vals);
@@ -211,18 +210,59 @@ pub fn pagerank(
             *r = damping * f + damping_dm + teleport * p;
         }
     }
-
     let total = np_sum(&rank);
     let final_rank: Vec<f64> = if total > 0.0 {
         rank.iter().map(|v| v / total).collect()
     } else {
         rank
     };
-    nodes
+    g.nodes
         .iter()
         .zip(final_rank)
         .map(|(p, s)| ((*p).to_string(), s))
         .collect()
+}
+
+/// Run TWO pagerank power iterations with one shared edge build (the focus
+/// ranker needs the personalized and plain scores for the same graph).
+/// Bit-identical to calling [`pagerank`] twice with the same arguments.
+pub fn pagerank_pair(
+    data: &IndexData,
+    damping: f64,
+    iters: u32,
+    pers_a: Option<&HashMap<String, f64>>,
+    pers_b: Option<&HashMap<String, f64>>,
+) -> (HashMap<String, f64>, HashMap<String, f64>) {
+    let g = pagerank_graph(data);
+    if g.n == 0 {
+        return (HashMap::new(), HashMap::new());
+    }
+    let a = pagerank_run(&pagerank_pvec(&g.nodes, pers_a), &g, damping, iters);
+    let b = pagerank_run(&pagerank_pvec(&g.nodes, pers_b), &g, damping, iters);
+    (a, b)
+}
+
+/// Compute file-level PageRank scores summing to ~1.0.
+///
+/// * `damping`: damping factor (teleport probability is `1 - damping`).
+/// * `iters`: fixed power-iteration count.
+/// * `personalization`: optional `{file: weight}` seed vector (used by focus);
+///   missing keys get weight 0. An all-zero/empty mapping falls back to uniform.
+///
+/// Dangling nodes (no out-edges) and unreachable mass are redistributed uniformly
+/// every iteration, exactly like the numpy reference implementation.
+pub fn pagerank(
+    data: &IndexData,
+    damping: f64,
+    iters: u32,
+    personalization: Option<&HashMap<String, f64>>,
+) -> HashMap<String, f64> {
+    let g = pagerank_graph(data);
+    if g.n == 0 {
+        return HashMap::new();
+    }
+    let pvec = pagerank_pvec(&g.nodes, personalization);
+    pagerank_run(&pvec, &g, damping, iters)
 }
 
 #[cfg(test)]

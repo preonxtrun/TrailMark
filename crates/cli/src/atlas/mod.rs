@@ -50,6 +50,19 @@ pub const TESTS_CORE_ROWS: usize = 1;
 /// the SPEC drop order; entries are never split.
 pub fn assemble(data: &IndexData, issue: Option<&str>, cli: &str, budget: usize) -> String {
     let pr = builder::pagerank_scores(data);
+    assemble_with_pagerank(data, issue, cli, budget, pr.as_ref())
+}
+
+/// [`assemble`] with a precomputed pagerank map (the focus path reuses the
+/// ranker's plain-pagerank scores instead of recomputing them; identical
+/// values, one fewer power-iteration run).
+pub fn assemble_with_pagerank(
+    data: &IndexData,
+    issue: Option<&str>,
+    cli: &str,
+    budget: usize,
+    pr: Option<&HashMap<String, f64>>,
+) -> String {
     let mut sections: Vec<Section> = Vec::new();
     sections.push(Section::with_rank("", R_HEADER, vec![TITLE.to_string()]));
     sections.push(Section::with_rank(
@@ -68,7 +81,7 @@ pub fn assemble(data: &IndexData, issue: Option<&str>, cli: &str, budget: usize)
     sections.push(Section {
         tag: "MAP".into(),
         rank: None,
-        items: builder::build_map(data, pr.as_ref()),
+        items: builder::build_map(data, pr),
         core: MAP_CORE_ROWS,
         item_rank: Some(R_MAP_ITEM),
         core_rank: Some(R_MAP_CORE),
@@ -76,14 +89,14 @@ pub fn assemble(data: &IndexData, issue: Option<&str>, cli: &str, budget: usize)
     sections.push(Section {
         tag: "TESTS".into(),
         rank: None,
-        items: testgraph::build_tests(data, pr.as_ref()),
+        items: testgraph::build_tests(data, pr),
         core: TESTS_CORE_ROWS,
         item_rank: Some(R_TESTS_ITEM),
         core_rank: Some(R_TESTS_CORE),
     });
     if let Some(issue) = issue {
         if !issue.is_empty() {
-            let (verbose, compact) = builder::build_plan(data, issue, pr.as_ref());
+            let (verbose, compact) = builder::build_plan(data, issue, pr);
             sections.push(Section::with_rank("PLAN", R_PLAN_VERBOSE, verbose));
             sections.push(Section::with_rank("PLAN", R_PLAN_COMPACT, compact));
         }
@@ -95,6 +108,8 @@ pub fn assemble(data: &IndexData, issue: Option<&str>, cli: &str, budget: usize)
     ));
     pack(&sections, budget)
 }
+
+use std::collections::HashMap;
 
 #[cfg(test)]
 mod tests {

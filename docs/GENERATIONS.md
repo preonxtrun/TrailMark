@@ -92,6 +92,24 @@ uv run python -m bench.report --out runs/gen0   # paired deltas + bootstrap CI
 
 Then fill the Gen-N entry above from `bench.report` output and commit.
 
+## Iteration backlog (from the v0 baseline datapoint)
+
+First real control run (no codegraph, `req-redirect-cookies`): **89 turns, 250K input +
+4.3M cache-read (93.4% of all tokens) + 57K output, 655s**. Since tokens ARE the cost
+(hyde-inference), and cache-read dominates total tokens, the per-turn replay is the
+burn — so **turns/task is the headline KPI**; every hypothesis below targets turn count.
+
+| # | Hypothesis | Expected lever | How measured |
+|---|---|---|---|
+| H1 | Control shows unbounded search loops (89 turns ≫ needed); the layer's stop-loss + map cut exploration turns 30-50% | Flight rules (stop-loss wording), MAP | turns/task, `subsumed-read` + `repeat-command` counts in `bench.analyze` |
+| H2 | Leads (preflight) delete the first ~5-10 discovery turns; biggest single cut available | Preflight PLAN | turns to first edit; lead hit@k vs task-relevant files |
+| H3 | 93.4% cache-read share means per-turn uncached input is small (~2.8K) — map+rules cost ≈ one turn-equivalent; net positive iff ≥1 discovery turn is deleted | whole layer | tokens/task net delta |
+| H4 | Orientation tasks (orient-3 suite) benefit most: near-zero exploration when the map answers "where is X" | Atlas + glossary | turns/task on orient suite |
+| H5 | The 89-turn run ended in a hard failure (exit -9) — runaway trajectories correlate with failure; capping wandering may RAISE success rate, not just cut cost | stop-loss + TESTS discipline | success proxy (patch produced) alongside tokens |
+
+Rule for iterations: one change per generation, mini-bench (5 bugfix + 3 orient tasks,
+1 seed) → `bench.analyze` → keep/revert by turns/task and the waste table.
+
 ## Mini-bench generations (primary loop)
 
 ```bash

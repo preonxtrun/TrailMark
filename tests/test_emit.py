@@ -53,12 +53,14 @@ def test_remove_block_restores_original_text(tmp_path):
     assert path.read_text(encoding="utf-8") == "Intro line\n"
 
 
-def test_remove_block_unlinks_block_only_file(tmp_path):
+def test_remove_block_restores_empty_file(tmp_path):
+    """G1: never delete — a file that existed stays, restored byte-for-byte (empty)."""
     path = tmp_path / "AGENTS.md"
+    path.write_text("", encoding="utf-8")
     agents_md.write_block(path, BODY)
     assert agents_md.remove_block(path) is True
-    assert not path.exists()
-    assert agents_md.remove_block(path) is False  # already gone
+    assert path.exists() and path.read_text(encoding="utf-8") == ""
+    assert agents_md.remove_block(path) is False  # already clean
 
 
 def test_remove_block_noop_without_markers(tmp_path):

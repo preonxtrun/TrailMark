@@ -203,17 +203,7 @@ fn ref_counts_ref(data: &IndexData) -> FnvMap<(&str, &str), usize> {
     counts
 }
 
-/// Fast FNV-1a builder (short-string keys, rebuilt per call).
-#[derive(Default)]
-struct FnvBuild;
-
-impl std::hash::BuildHasher for FnvBuild {
-    type Hasher = FnvHasher;
-    fn build_hasher(&self) -> FnvHasher {
-        FnvHasher(0xcbf2_9ce4_8422_2325)
-    }
-}
-
+/// Fast FNV-1a hasher for internal short-string maps (rebuilt per call).
 #[derive(Default)]
 struct FnvHasher(u64);
 
@@ -433,17 +423,17 @@ pub fn build_plan(
     let mut file_scores: HashMap<String, usize> = HashMap::new();
     for (path, entry) in &data.files {
         let mut blob = String::with_capacity(64 + entry.symbols.len() * 32);
-        blob.push_str(&path.to_lowercase());
+        push_lower(&mut blob, path);
         for s in &entry.symbols {
             blob.push(' ');
-            blob.push_str(&s.name.to_lowercase());
+            push_lower(&mut blob, &s.name);
             if !s.doc.is_empty() {
                 blob.push(' ');
-                blob.push_str(&s.doc.to_lowercase());
+                push_lower(&mut blob, &s.doc);
             }
             if !s.signature.is_empty() {
                 blob.push(' ');
-                blob.push_str(&s.signature.to_lowercase());
+                push_lower(&mut blob, &s.signature);
             }
         }
         let mut score = 0usize;
@@ -553,6 +543,16 @@ fn issue_runs(issue: &str) -> Vec<String> {
         runs.push(cur);
     }
     runs
+}
+
+/// `s.to_lowercase()` pushed into `out`, skipping the allocation when the text
+/// is already lowercase ASCII (identical result to the reference's `.lower()`).
+fn push_lower(out: &mut String, s: &str) {
+    if s.is_ascii() && s.bytes().all(|b| !b.is_ascii_uppercase()) {
+        out.push_str(s);
+    } else {
+        out.push_str(&s.to_lowercase());
+    }
 }
 
 /// Prose stopwords for issue-term extraction (copied from `atlas/builder.py`).

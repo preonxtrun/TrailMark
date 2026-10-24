@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use codegraph_cli::atlas::assemble;
-use codegraph_cli::focus::{generate_for, generate_top, rank, Lead};
+use codegraph_cli::focus::{generate_for, generate_top, Lead};
 use codegraph_core::{
     build, byte_len, read_block, remove_block, update, write_block, IndexCache,
     DEFAULT_BUDGET_BYTES,
@@ -329,8 +329,17 @@ fn cmd_focus(
         Some(v) if v > 0 => v as usize,
         _ => DEFAULT_BUDGET_BYTES,
     };
-    let leads = rank(&data, &cache, &issue, 5);
-    let body = assemble(&data, Some(&issue), &cli_name, budget);
+    // rank computes the personalized graph pagerank and the plain prior in one
+    // pass; the prior is handed to the assembler so the block body reuses the
+    // same power iteration instead of recomputing it
+    let (leads, prior) = codegraph_cli::focus::rank_and_prior(&data, &cache, &issue, 5);
+    let body = codegraph_cli::atlas::assemble_with_pagerank(
+        &data,
+        Some(&issue),
+        &cli_name,
+        budget,
+        Some(&prior),
+    );
     let changed = match write_block(&root.join(codegraph_core::AGENTS_FILENAME), &body) {
         Ok(c) => c,
         Err(e) => {
