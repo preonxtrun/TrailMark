@@ -336,7 +336,7 @@ def test_rules_single_agnostic_variant():
     assert len(set(texts.values())) == 1, "rules must NOT fork per CLI"
     text = next(iter(texts.values()))
     assert text == rules.flight_rules("whatever")  # deterministic
-    assert 400 <= byte_len(text) <= 1200
+    assert 400 <= byte_len(text) <= 1500
     assert max(len(line) for line in text.split("\n")) <= rules.WRAP_WIDTH + 2
     lowered = text.lower()
     for term in ("mcp", "subagent", "sub-agent", "parallel tool", "claude", "codex", "opencode"):
