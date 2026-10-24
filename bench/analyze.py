@@ -39,6 +39,7 @@ class Step:
     input_tokens: int = 0
     cache_read: int = 0
     output_tokens: int = 0
+    message_id: str = ""
 
 
 @dataclass
@@ -49,6 +50,7 @@ class Trajectory:
     tokens: dict[str, int] = field(default_factory=dict)
     turns: int = 0
     tool_errors: int = 0
+    prose_chars: int = 0  # assistant prose — replays like any content
     waste: Counter = field(default_factory=Counter)
     waste_detail: list[str] = field(default_factory=list)
 
@@ -104,11 +106,14 @@ def parse_stream(path: Path) -> Trajectory:
                     tool=tool,
                     target=_target_of(tool, inp)[:200],
                     status=_status_of(part),
+                    message_id=str(part.get("messageID") or ""),
                 )
             )
             index += 1
             if _status_of(part) in {"error", "failed"}:
                 traj.tool_errors += 1
+        elif etype == "text":
+            traj.prose_chars += len(str(part.get("text") or ""))
         elif etype == "step_finish":
             t = part.get("tokens") if isinstance(part.get("tokens"), dict) else {}
             cache = t.get("cache") if isinstance(t.get("cache"), dict) else {}
@@ -118,6 +123,7 @@ def parse_stream(path: Path) -> Trajectory:
                     input_tokens=int(t.get("input") or 0),
                     cache_read=int(cache.get("read") or 0),
                     output_tokens=int(t.get("output") or 0) + int(t.get("reasoning") or 0),
+                    message_id=str(part.get("messageID") or ""),
                 )
             )
             index += 1
@@ -182,6 +188,36 @@ def detect_waste(traj: Trajectory) -> None:
             scripts.append((step.index, body))
 
 
+def content_hotspots(traj: Trajectory, top: int = 6) -> list[tuple[str, int, str]]:
+    """Message-level content attribution ranked by DAMAGE = new_tokens × remaining turns.
+
+    A 12K read at step 5 of a 53-turn run costs ~610K token-events; the same read
+    at the last step costs ~12K. Early exploration reads dominate.
+    """
+    by_msg: dict[str, dict] = {}
+    total_turns = max(1, traj.turns)
+    for step in traj.steps:
+        entry = by_msg.setdefault(step.message_id, {"tools": [], "input": 0, "at": step.index})
+        if step.tool:
+            entry["tools"].append(step.tool)
+        if step.input_tokens and not entry["input"]:
+            entry["input"] += step.input_tokens
+            entry["at"] = sum(1 for s2 in traj.steps[: step.index + 1] if s2.input_tokens) or 1
+    ranked = sorted(
+        ((m, d) for m, d in by_msg.items() if d["input"] > 0),
+        key=lambda kv: -kv[1]["input"] * max(1, total_turns - kv[1]["at"]),
+    )[:top]
+    return [
+        (
+            "+".join(dict.fromkeys(d["tools"])) or "text-only",
+            d["input"],
+            d["at"],
+            d["input"] * max(1, total_turns - d["at"]),
+        )
+        for m, d in ranked
+    ]
+
+
 def load_runs(out_dir: Path) -> list[Trajectory]:
     streams = sorted((out_dir / "streams").glob("*.jsonl")) if (out_dir / "streams").is_dir() else []
     trajs = [parse_stream(path) for path in streams]
@@ -223,6 +259,18 @@ def render(out_dir: Path, trajs: list[Trajectory]) -> str:
         if traj.waste_detail:
             lines += ["", f"## {traj.name} ({traj.arm}) — waste detail", ""]
             lines += [f"- {detail}" for detail in traj.waste_detail]
+
+    lines += ["", "## Content hotspots — damage-ranked (new tokens × remaining turns)", ""]
+    for traj in trajs:
+        hotspots = content_hotspots(traj)
+        prose_tok = traj.prose_chars // 4
+        if not hotspots and not prose_tok:
+            continue
+        lines += [f"### {traj.name} ({traj.arm}) — prose ≈ {prose_tok:,} tok", "",
+                  "| tools | new tokens | turn | damage ≈ |", "|---|---:|---|---:|"]
+        for tools, tokens, at, damage in hotspots:
+            lines.append(f"| {tools} | {tokens:,} | ~{at} | {damage:,} |")
+    lines.append("")
 
     by_arm: dict[str, list[Trajectory]] = {}
     for traj in trajs:
