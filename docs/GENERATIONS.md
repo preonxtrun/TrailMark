@@ -132,6 +132,25 @@ Then fill the Gen-N entry above from `bench.report` output and commit.
     second run of a repo starts with memory.
 - **verdict**: KEEP (no task completion regression; turns down) — rule/lead wording iteration next.
 
+## Gen 0.3 — bugfix trap task: correct no-op vs wrong-target patch
+
+- **date**: 2026-10-24 · **commit**: `4b0737b`-era layer (contracts+snippets+scratchpad active)
+- **suite**: `req-schema-error` (requests-bugfix) × control/treatment × 1 seed
+- **result**: control **1,407,308 tok / 35 turns → 3,935B patch**; treatment **120,015 tok / 11 turns → 0B patch**
+- **analysis**: the task premise is a TRAP — requests already raises `MissingSchema` with the
+  URL (`models.py:515-519`). Treatment agent detected this via the injected contracts/snippets,
+  verified end-to-end, and correctly stopped ("no change was needed"; stream shows it consulted
+  the scratchpad + atlas leads first — the exotic mechanisms are behaviorally ACTIVE). Control
+  modified the WRONG error site (`InvalidSchema` in sessions.py) + HISTORY.md — 1.4M tokens of
+  wrong-target work.
+- **caveats**: n=1; trap task (measures existing-behavior detection, a real skill — kept in the
+  suite, annotated); environment churn from two overlapping campaigns (process discipline: never
+  launch overlapping campaigns on the same out-dirs/repos).
+- **verdict**: KEEP — cost AND correctness favored the layer; patch-size is not a success proxy
+  (a 0B patch can be the RIGHT answer). Benchmark conclusion: token deltas must be paired with
+  outcome verification (test-based resolve gating is the fix — queued).
+- **next**: verify `orient` replication in the fixed clean campaign (running); then Rust swap.
+
 ## Iteration backlog (from the v0 baseline datapoint)
 
 First real control run (no codegraph, `req-redirect-cookies`): **89 turns, 250K input +
