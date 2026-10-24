@@ -175,8 +175,7 @@ def _extract_snippets(data: IndexData, leads: list[Any], per_lead_cap: int = 140
             continue
         start = max(1, int(getattr(lead, "start_line", 1) or 1))
         end = int(getattr(lead, "end_line", start) or start)
-        if end < start:
-            end = start
+        end = max(end, start)
         try:
             source = (Path(data.root) / path).read_text(encoding="utf-8", errors="replace")
             lines = source.splitlines()

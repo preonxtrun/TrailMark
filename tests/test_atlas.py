@@ -246,7 +246,7 @@ def _sample_sections() -> list[Section]:
         ),
         Section(
             tag="TESTS",
-            items=["- runner: python -m pytest -x -q"] + [f"- s{i}.py → t{i}.py" for i in range(3)],
+            items=["- runner: python -m pytest -x -q --tb=line 2>&1 | tail -40"] + [f"- s{i}.py → t{i}.py" for i in range(3)],
             core=1,
             item_rank=30,
             core_rank=70,
@@ -463,7 +463,7 @@ def test_testgraph_runner_pytest_from_pyproject(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n")
     data = make_data(root=str(tmp_path))
     rows = testgraph.build_tests(data, None)
-    assert rows[0] == "- runner: python -m pytest -x -q"
+    assert rows[0] == "- runner: python -m pytest -x -q --tb=line 2>&1 | tail -40"
 
 
 # -- MAP builder -----------------------------------------------------------------------
