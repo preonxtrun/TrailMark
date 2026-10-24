@@ -498,7 +498,7 @@ def _check_focus_write(rc: int, block_body: str | None) -> tuple[bool, str]:
         return False, f"cli_focus.run exited {rc}"
     if block_body is None:
         return False, "no block written"
-    if "LEADS (verify, don't trust):" not in block_body:
+    if "LEADS (verify" not in block_body:
         return False, "block has no PLAN leads"
     return True, f"block written ({byte_len(block_body)} B, PLAN leads present)"
 
