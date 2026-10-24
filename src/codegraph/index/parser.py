@@ -805,6 +805,11 @@ def _is_plausible_name(name: str) -> bool:
     return 2 <= len(name) <= 80 and bool(_NAME_RE.match(name))
 
 
+def _span(node) -> tuple[int, int]:
+    """Deterministic sort key for tree-sitter capture nodes (byte span)."""
+    return (node.start_byte, node.end_byte)
+
+
 def _extract_refs(
     root: str, relpath: str, lang: str, grammar: str, root_node, src: bytes
 ) -> list[Ref]:
@@ -812,7 +817,10 @@ def _extract_refs(
     raws: list[RawRef] = []
     imp_cursor = _compiled(grammar, "imp")
     if imp_cursor is not None:
-        for node in imp_cursor.captures(root_node).get("imp", []):
+        # captures() (dict API) returns per-parse-random order — sort by byte span
+        # to restore deterministic source order (invariant #1).
+        imp_nodes = sorted(imp_cursor.captures(root_node).get("imp", []), key=_span)
+        for node in imp_nodes:
             for raw in _import_refs(root, relpath, lang, node, src):
                 raws.append(raw)
                 if len(raws) >= MAX_REFS_PER_FILE:
@@ -822,7 +830,8 @@ def _extract_refs(
     # imports first (highest value), then identifier occurrences, capped
     id_cursor = _compiled(grammar, "id")
     if id_cursor is not None and len(raws) < MAX_REFS_PER_FILE:
-        for node in id_cursor.captures(root_node).get("id", []):
+        id_nodes = sorted(id_cursor.captures(root_node).get("id", []), key=_span)
+        for node in id_nodes:
             name = _txt(node, src)
             if not _is_plausible_name(name):
                 continue

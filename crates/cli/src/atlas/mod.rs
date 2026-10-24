@@ -401,12 +401,15 @@ rule: r7 — beyond the cap
     #[test]
     fn assemble_renders_lab_and_wrapped_profile_rules() {
         let data = repo();
-        let long_rule = "rule: when a delegated exploration returns a summary, keep its file:line references so the same code is never retrieved twice";
-        let root = write_profile(
-            "lab",
-            "# profile\nfact: gpu queue drains at midnight\nfact: scratch quota 1 TB\n\
-             rule: check sacct once per job\n{long_rule}\n",
+        // a profile rule long enough to wrap at the 76-byte rules width (its
+        // wording deliberately differs from the built-in bullet #5)
+        let profile_text = concat!(
+            "# profile\nfact: gpu queue drains at midnight\nfact: scratch quota 1 TB\n",
+            "rule: check sacct once per job\n",
+            "rule: when a delegated exploration returns a summary, keep its file:line ",
+            "references so the very same probe is never retrieved twice\n",
         );
+        let root = write_profile("lab", profile_text);
         let mut data = data;
         data.root = root.clone();
         let body = assemble(&data, Some("fix shared_api"), "generic", 8192);
@@ -419,7 +422,7 @@ rule: r7 — beyond the cap
         let lab_idx = body.find("LAB").expect("LAB header");
         let rules_block = &body[rules_idx..lab_idx];
         assert!(rules_block.contains("check sacct once per job"));
-        assert!(rules_block.contains("  references so the same code is never retrieved twice"));
+        assert!(rules_block.contains("  references so the very same probe"));
         // LAB drops after GLOSSARY but before PLAN under budget pressure
         let tight = assemble(&data, Some("fix shared_api"), "generic", 900);
         if tight.contains("PLAN") {

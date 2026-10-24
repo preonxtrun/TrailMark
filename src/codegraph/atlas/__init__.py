@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .. import trails
 from ..emit import fmt
 from ..model import IndexData
 from . import budget, builder, glossary, rules, testgraph
@@ -89,6 +90,10 @@ def _plan_from_leads(leads: list[Any]) -> tuple[list[str], list[str]]:
 #: before PLAN — facts are cheap and high-value on lab/cluster workloads.
 R_LAB = 5
 
+#: Drop rank for cross-task trail memory (stigmergy, ``.codegraph/trails.jsonl``):
+#: after LAB (5), before PLAN verbose (10) — recency hints die before planning.
+R_TRAILS = 7
+
 
 def load_profile(root: str) -> tuple[list[str], list[str]]:
     """(facts, extra_rules) from an optional ``.codegraph/profile.txt``.
@@ -130,10 +135,13 @@ def assemble(
     Sections, in emit order: title, RULES (full text, with a one-line compact
     fallback), MAP (directory roles + pagerank-ordered hot files), TESTS (runner
     + src→test map), PLAN (only when *issue* is given, verbose + compact
-    variants), GLOSSARY. When *leads* (focus ``Lead`` objects, pre-ranked by
+    variants), LAB (only when a profile file exists), TRAILS (only when a trails
+    file with entries exists — cross-task hot files and dead ends, rank
+    :data:`R_TRAILS`), GLOSSARY. When *leads* (focus ``Lead`` objects, pre-ranked by
     ``focus.ranker.rank``) are supplied they drive PLAN; otherwise PLAN falls
     back to internal issue-keyword scoring. The byte budget is enforced by
-    :func:`pack` with the SPEC drop order; entries are never split.
+    :func:`pack` with the SPEC drop order; entries are never split. A repo
+    without trails yields byte-identical output to a trails-less build.
     """
     pr = builder.pagerank_scores(data)
     facts, extra_rules = load_profile(data.root)
@@ -174,6 +182,9 @@ def assemble(
         sections.append(
             Section(tag="LAB", rank=R_LAB, items=[f"- {fact}" for fact in facts])
         )
+    trail_items = trails.section_items(data.root)
+    if trail_items:
+        sections.append(Section(tag="TRAILS", rank=R_TRAILS, items=trail_items))
     sections.append(
         Section(
             tag="GLOSSARY",

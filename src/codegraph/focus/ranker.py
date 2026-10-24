@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from ..cache import Hit, IndexCache
 from ..model import IndexData, Ref, Symbol
@@ -371,3 +372,100 @@ def rank(data: IndexData, cache: IndexCache, issue: str, k: int = 5) -> list[Lea
             )
         )
     return leads
+
+
+def explain(
+    issue: str, data: IndexData, cache: IndexCache, k: int = 8
+) -> list[tuple[Lead, dict[str, Any]]]:
+    """Explain-mode ranking: the exact :func:`rank` pipeline, annotated per lead.
+
+    Returns up to *k* ``(lead, detail)`` pairs. Each *lead* is identical to the
+    entry :func:`rank` produces for the same ``(data, cache, issue, k)``;
+    *detail* carries the four normalized component scores (``lexical``,
+    ``graph``, ``test``, ``prior``), the final ``score``, the chosen lead
+    ``symbol`` / ``line`` / ``end_line``, the file's best BM25 ``hit`` (or
+    None) and the pre-normalization ``raw`` component values (inverted bm25,
+    personalized PageRank, matched-token count, global PageRank).
+
+    Drift safety: this mirrors :func:`rank` step for step while reusing the
+    same helpers (``issue_tokens``, ``_lexical``, ``file_pagerank``,
+    ``_test_proximity``, ``_minmax``, ``_best_symbol``, ``_why_text``) — no
+    scoring logic is duplicated. ``tests/test_diag.py`` pins the two surfaces
+    together (explain's leads must equal rank's leads for identical inputs),
+    so they can never silently drift apart.
+    """
+    if k <= 0 or not data.files:
+        return []
+    tokens = issue_tokens(issue)
+
+    best_by_file = {f: h for f, h in _lexical(cache, tokens).items() if f in data.files}
+    test_signal = _test_proximity(data, tokens)
+    candidates = sorted(set(best_by_file) | set(test_signal))
+    if not candidates:
+        # No lexical and no test signal (vague issue): fall back to PageRank top-k.
+        prior0 = file_pagerank(data.files, data.refs)
+        candidates = sorted(data.files, key=lambda p: (-prior0.get(p, 0.0), p))[:k]
+
+    lex_raw = {f: max(0.0, -best_by_file[f].score) for f in sorted(best_by_file)}
+    lex_norm = _minmax(lex_raw)
+
+    # Personalized PageRank seeded from the BM25-top-20 files.
+    lex_order = sorted(best_by_file, key=lambda f: (best_by_file[f].score, f))
+    seeds = lex_order[:_SEED_LIMIT]
+    personalization: dict[str, float] | None = None
+    if seeds:
+        seed_raw = {f: 1.0 / (i + 1) for i, f in enumerate(seeds)}
+        z = sum(seed_raw.values())
+        personalization = {path: seed_raw.get(path, 0.0) / z for path in data.files}
+    graph = file_pagerank(data.files, data.refs, personalization=personalization)
+    prior = file_pagerank(data.files, data.refs)
+
+    graph_norm = _minmax({f: graph.get(f, 0.0) for f in candidates})
+    prior_norm = _minmax({f: prior.get(f, 0.0) for f in candidates})
+    test_norm = _minmax({f: test_signal.get(f, 0.0) for f in candidates})
+
+    scored: list[tuple[str, float]] = []
+    for path in candidates:
+        score = (
+            W_LEXICAL * lex_norm.get(path, 0.0)
+            + W_GRAPH * graph_norm.get(path, 0.0)
+            + W_TEST * test_norm.get(path, 0.0)
+            + W_PRIOR * prior_norm.get(path, 0.0)
+        )
+        scored.append((path, min(1.0, max(0.0, score))))
+    scored.sort(key=lambda item: (-item[1], item[0]))
+
+    out: list[tuple[Lead, dict[str, Any]]] = []
+    for path, score in scored:
+        if len(out) >= k:
+            break
+        sym = _best_symbol(data, path, best_by_file.get(path), tokens)
+        if sym is None:
+            continue
+        hit = best_by_file.get(path)
+        detail: dict[str, Any] = {
+            "lexical": lex_norm.get(path, 0.0),
+            "graph": graph_norm.get(path, 0.0),
+            "test": test_norm.get(path, 0.0),
+            "prior": prior_norm.get(path, 0.0),
+            "score": score,
+            "symbol": sym.name,
+            "line": sym.line,
+            "end_line": sym.end_line,
+            "hit": None if hit is None else {"name": hit.name, "line": hit.line, "bm25": hit.score},
+            "raw": {
+                "lexical": lex_raw.get(path, 0.0),
+                "graph": graph.get(path, 0.0),
+                "test": test_signal.get(path, 0.0),
+                "prior": prior.get(path, 0.0),
+            },
+        }
+        lead = Lead(
+            path=path,
+            start_line=sym.line,
+            end_line=sym.end_line,
+            why=_why_text(data, sym),
+            score=score,
+        )
+        out.append((lead, detail))
+    return out

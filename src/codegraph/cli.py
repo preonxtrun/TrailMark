@@ -1,4 +1,6 @@
-"""codegraph CLI: init / focus / remove / stats / doctor / watch (SPEC CLI contract).
+"""codegraph CLI: init / focus / remove / stats / doctor / watch (SPEC CLI contract),
+plus the diagnostics toolkit (why / search / refs / block / selftest in
+``codegraph.diag``).
 
 Global flags ``--root`` (default ``.``), ``--budget`` and ``--json`` are accepted
 both before and after the subcommand. Heavy sibling packages (``codegraph.index``,
@@ -22,6 +24,7 @@ from pathlib import Path
 
 from .atlas import assemble
 from .cache import IndexCache
+from .diag import SELFTEST_ISSUE
 from .emit.agents_md import read_block, remove_block, write_block
 from .model import DEFAULT_BUDGET_BYTES, IndexData
 from .util.tokens import byte_len
@@ -118,6 +121,47 @@ def build_parser() -> argparse.ArgumentParser:
         "--interval", type=float, default=2.0, help="poll interval seconds (default: 2)"
     )
     p_watch.set_defaults(func=_cmd_watch)
+
+    # -- diagnostics toolkit (codegraph.diag) ---------------------------------
+
+    p_why = sub.add_parser(
+        "why", help="explain the ranking for an issue: per-file component scores"
+    )
+    _add_common(p_why, suppress=True)
+    p_why.add_argument("issue", help="issue / problem-statement text")
+    p_why.add_argument("--k", type=int, default=8, help="candidate files to explain (default: 8)")
+    p_why.set_defaults(func=_cmd_why)
+
+    p_search = sub.add_parser(
+        "search", help="show the BM25 lexical hits a query produces (best first)"
+    )
+    _add_common(p_search, suppress=True)
+    p_search.add_argument("query", help="search query text")
+    p_search.add_argument("--k", type=int, default=20, help="max hits (default: 20)")
+    p_search.set_defaults(func=_cmd_search)
+
+    p_refs = sub.add_parser(
+        "refs", help="show one file's symbols, resolved/unresolved refs and pagerank"
+    )
+    _add_common(p_refs, suppress=True)
+    p_refs.add_argument("path", help="file path (repo-relative or absolute)")
+    p_refs.set_defaults(func=_cmd_refs)
+
+    p_block = sub.add_parser(
+        "block", help="print the managed AGENTS.md block exactly as the agent sees it"
+    )
+    _add_common(p_block, suppress=True)
+    p_block.set_defaults(func=_cmd_block)
+
+    p_self = sub.add_parser(
+        "selftest", help="run the full pipeline on a throwaway sandbox and verify the guarantees"
+    )
+    _add_common(p_self, suppress=True)
+    p_self.add_argument(
+        "--issue", default="", help=f"issue text for the focus stage (default: {SELFTEST_ISSUE!r})"
+    )
+    p_self.add_argument("--keep", action="store_true", help="keep the sandbox dir for inspection")
+    p_self.set_defaults(func=_cmd_selftest)
     return parser
 
 
@@ -413,6 +457,56 @@ def _scan_signature(root: Path) -> str:
             rel = path.relative_to(root)
             parts.append(f"{rel}:{st.st_size}:{int(st.st_mtime_ns)}")
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+# -- diagnostics handlers (thin delegation to codegraph.diag) -----------------
+
+
+def _cmd_why(args: argparse.Namespace) -> int:
+    """Delegate to codegraph.diag.why (exit 2 when the index cache is missing)."""
+    from .diag import why  # lazy: diagnostics are optional siblings
+
+    raw_k = getattr(args, "k", None)
+    k = 8 if raw_k is None else int(raw_k)
+    return int(why(_root_of(args), str(getattr(args, "issue", "") or ""), k, _json_of(args)))
+
+
+def _cmd_search(args: argparse.Namespace) -> int:
+    """Delegate to codegraph.diag.search (exit 2 when the index cache is missing)."""
+    from .diag import search  # lazy: diagnostics are optional siblings
+
+    raw_k = getattr(args, "k", None)
+    k = 20 if raw_k is None else int(raw_k)
+    return int(search(_root_of(args), str(getattr(args, "query", "") or ""), k, _json_of(args)))
+
+
+def _cmd_refs(args: argparse.Namespace) -> int:
+    """Delegate to codegraph.diag.refs (exit 2 missing cache, 1 unknown path)."""
+    from .diag import refs  # lazy: diagnostics are optional siblings
+
+    return int(refs(_root_of(args), str(getattr(args, "path", "") or ""), _json_of(args)))
+
+
+def _cmd_block(args: argparse.Namespace) -> int:
+    """Delegate to codegraph.diag.block (exit 0 with or without a block)."""
+    from .diag import block  # lazy: diagnostics are optional siblings
+
+    return int(block(_root_of(args), _json_of(args)))
+
+
+def _cmd_selftest(args: argparse.Namespace) -> int:
+    """Delegate to codegraph.diag.selftest (exit 0 only when every check passes)."""
+    from .diag import SELFTEST_ISSUE, selftest  # lazy: diagnostics are optional siblings
+
+    issue = str(getattr(args, "issue", "") or "").strip() or SELFTEST_ISSUE
+    return int(
+        selftest(
+            budget=_budget_of(args),
+            issue=issue,
+            keep=bool(getattr(args, "keep", False)),
+            as_json=_json_of(args),
+        )
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover — convenience: python -m codegraph.cli
