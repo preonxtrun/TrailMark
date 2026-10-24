@@ -214,13 +214,15 @@ impl IndexCache {
                         break;
                     }
                 }
-                while let Some(sym) = pending.as_ref() {
-                    if sym.file == owned.path {
-                        owned.symbols.push(pending.take().expect("pending symbol"));
-                        pending = sym_iter.next();
-                    } else {
+                loop {
+                    let take_it = pending.as_ref().is_some_and(|sym| sym.file == owned.path);
+                    if !take_it {
                         break;
                     }
+                    if let Some(sym) = pending.take() {
+                        owned.symbols.push(sym);
+                    }
+                    pending = sym_iter.next();
                 }
                 files.insert(owned.path.clone(), owned);
             }

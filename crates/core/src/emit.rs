@@ -52,7 +52,12 @@ pub fn write_block(path: &Path, body: &str) -> io::Result<bool> {
     let end = existing.find(BLOCK_END);
     // malformed markers (one without its pair, or end before start): refuse to
     // guess — we would never be able to restore the file faithfully
-    if start.is_some() != end.is_some() || (start.is_some() && end.unwrap() < start.unwrap()) {
+    let malformed = match (start, end) {
+        (Some(s), Some(e)) => e < s,
+        (None, None) => false,
+        _ => true,
+    };
+    if malformed {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
