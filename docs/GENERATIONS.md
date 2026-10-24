@@ -109,6 +109,29 @@ Then fill the Gen-N entry above from `bench.report` output and commit.
 - **verdict**: **KEEP** — H4 confirmed (orientation = map's home turf). Directionally
   strong (n=3, 1 seed); confirmation on the bugfix suite pending (costlier: ~0.5-1M tokens).
 
+## Gen 0.2 — feature suite: turns cut, tail dominates — verdict: KEEP + ITERATE RULES
+
+- **date**: 2026-10-24 · **commit**: `723d042` era (layer v0.1 + multi-harness)
+- **suite**: `requests-feature-3.jsonl` × control/treatment × 1 seed
+- **result**: turns 121→95 (−21%); tokens 3.81M→3.56M (−6%); NOTE: feat-retries control was
+  tainted (mid-run kill) → purged, pair re-running. Per-task: onrequest −23% tok (53→47 turns),
+  verify-precedence **−48% turns** (42→22) but tokens −3%.
+- **analysis**:
+  1. Feature cost is dominated by implementation/debug **tail** loops (42–53-turn controls),
+     not discovery — map+leads cut discovery but the tail burns cache-replay.
+  2. **Stop-loss never bound** (47–53 turns) — rules cover search loops, not edit-verify
+     stalls ("progress stalls" behavior, arXiv 2609.30725).
+  3. `subsumed-read`/`repeat-command` UP under treatment (12/14 vs 1/9 on onrequest) —
+     5-file lead lists invite ping-pong reads.
+- **planned improvements (next generations)**:
+  - G-imp1: progress-stall rule — "same test failure twice OR 2 failed searches → change
+    hypothesis explicitly or stop and report"; plus turn-budget awareness near the end.
+  - G-imp2: lead phrasing — "one ranged read per lead, then act; do not re-open a lead
+    without a new hypothesis".
+  - G-imp3: trails auto-deposit from mini-bench (solved→hot, failed→dead ends) so the
+    second run of a repo starts with memory.
+- **verdict**: KEEP (no task completion regression; turns down) — rule/lead wording iteration next.
+
 ## Iteration backlog (from the v0 baseline datapoint)
 
 First real control run (no codegraph, `req-redirect-cookies`): **89 turns, 250K input +
