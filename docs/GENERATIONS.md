@@ -1,4 +1,8 @@
-# trailmark — Optimization Generations
+# Trailmark — Optimization Generations
+
+> History note: generations 0.0–0.3 ran under the original working name `codegraph`.
+> Renamed to **trailmark** before Gen 1.0 (the old name collided with an
+> unrelated structure-aware retrieval tool in the cost literature).
 
 Every change to the trailmark layer is one **generation**: a trailmark commit, a frozen
 config, and one paired A/B on the standard SWE-bench Verified pipeline. Nothing is ever
