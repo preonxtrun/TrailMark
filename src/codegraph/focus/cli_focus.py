@@ -55,7 +55,10 @@ def run(args: argparse.Namespace) -> int:
     cli_name = _resolve_cli(getattr(args, "cli", None))
     budget = _budget(args)
     leads = rank(data, cache, issue, k=5)
-    body = _assemble_body(data, leads, issue, cli_name, budget)
+    # G-imp4: inline lead contracts need headroom — each contracted lead displaces an
+    # early full-file read (the highest replay-damage content in a run).
+    effective_budget = max(budget, 2048 + 900 * min(3, len(leads))) if leads else budget
+    body = _assemble_body(data, leads, issue, cli_name, effective_budget)
     try:
         changed = write_block(root / AGENTS_FILENAME, body)
     except OSError:
