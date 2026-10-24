@@ -286,14 +286,14 @@ def build_plan(
 
     if not leads:
         verbose = [
-            "LEADS (verify, don't trust):",
+            "LEADS (verify, don't trust; one ranged read each, then act):",
             "- (no lexical matches in index — start from MAP hot files)",
         ]
         compact = ["(no lexical matches — start from MAP hot files)"]
         return verbose, compact
 
     verbose = [
-        "LEADS (verify, don't trust):",
+        "LEADS (verify, don't trust; one ranged read each, then act):",
         *leads,
         f"OUTLINES: .codegraph/outlines/{top_ref}.md",
     ]

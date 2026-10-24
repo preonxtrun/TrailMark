@@ -72,13 +72,13 @@ def _plan_from_leads(leads: list[Any]) -> tuple[list[str], list[str]]:
     if not lines:
         return (
             [
-                "LEADS (verify, don't trust):",
+                "LEADS (verify, don't trust; one ranged read each, then act):",
                 "- (no lexical matches in index — start from MAP hot files)",
             ],
             ["(no lexical matches — start from MAP hot files)"],
         )
     verbose = [
-        "LEADS (verify, don't trust):",
+        "LEADS (verify, don't trust; one ranged read each, then act):",
         *lines,
         f"OUTLINES: .codegraph/outlines/{top_ref}.md",
     ]

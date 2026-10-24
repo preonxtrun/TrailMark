@@ -347,6 +347,7 @@ def test_rules_single_agnostic_variant():
         "Run the exact test target from TESTS",
         "Persist probes to one scratch file",
         "Stop-loss: after 2 failed searches",
+        "Progress-stall stop",
     ):
         assert snippet in text
     assert rules.compact_rules("claude") == rules.compact_rules("shell") == rules.compact_rules("x")
