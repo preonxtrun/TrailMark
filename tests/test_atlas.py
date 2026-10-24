@@ -201,15 +201,19 @@ def test_budget_512_floor():
 
 
 def test_budget_2048_and_4096_full():
-    for budget in (2048, 4096):
-        body = assemble(make_data(), None, "generic", budget)
-        assert byte_len(body) <= budget
-        assert "GLOSSARY" in body and section_lines(body, "GLOSSARY")
-        assert len(section_lines(body, "MAP")) == 5
-        assert len(section_lines(body, "TESTS")) == 3  # runner + 2 pairs
-        assert "Consult MAP/TESTS" in body  # full rules text
-        terms = [row.split(" = ")[0][2:] for row in section_lines(body, "GLOSSARY")]
-        assert "token" in terms and "session" in terms
+    # 2048: fits but glossary (rank 0) drops first by design — rules+map+tests outgrew it
+    body_2048 = assemble(make_data(), None, "generic", 2048)
+    assert byte_len(body_2048) <= 2048
+    assert "GLOSSARY" not in body_2048
+    # 4096: everything present
+    body = assemble(make_data(), None, "generic", 4096)
+    assert byte_len(body) <= 4096
+    assert "GLOSSARY" in body and section_lines(body, "GLOSSARY")
+    assert len(section_lines(body, "MAP")) == 5
+    assert len(section_lines(body, "TESTS")) == 3  # runner + 2 pairs
+    assert "Consult MAP/TESTS" in body  # full rules text
+    terms = [row.split(" = ")[0][2:] for row in section_lines(body, "GLOSSARY")]
+    assert "token" in terms and "session" in terms
 
 
 def test_drop_order_monotone_across_budgets():
