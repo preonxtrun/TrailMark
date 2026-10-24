@@ -48,6 +48,11 @@ BASE_RULES: tuple[str, ...] = (
         "Scratchpad: keep facts learned, dead ends and the current hypothesis in"
         " .codegraph/scratch.md; consult it before re-reading any file."
     ),
+    (
+        "Verify probes: after each edit run .codegraph/probes/verify.sh exactly as"
+        " written — one call, bounded output; update the scratchpad HYPOTHESIS/RESULT"
+        " lines before the next edit. Never compose your own test command."
+    ),
     "Stop-loss: after 2 failed searches, re-read the map — do not keep guessing.",
 )
 

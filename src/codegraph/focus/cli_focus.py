@@ -63,6 +63,18 @@ def run(args: argparse.Namespace) -> int:
     leads = rank(data, cache, issue, k=5)
     effective_budget = effective_budget_for(budget, len(leads))
     body = _assemble_body(data, leads, issue, cli_name, effective_budget)
+    # G-imp-probe: write the bounded verify probe (one-call edit-verify cycles)
+    try:
+        from .testgraph import detect_runner
+
+        runner = detect_runner(str(Path(root)))
+        if runner:
+            from .probes import write_probe
+
+            target = leads[0].path if leads else ""
+            write_probe(root, runner, target)
+    except Exception:  # probe is an optimization, never a failure
+        logging.getLogger(__name__).debug("probe write skipped", exc_info=True)
     try:
         changed = write_block(root / AGENTS_FILENAME, body)
     except OSError:
