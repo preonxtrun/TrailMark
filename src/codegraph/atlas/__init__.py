@@ -142,15 +142,21 @@ def _contracts(data: IndexData, leads: list[Any], per_file_cap: int = 280) -> li
         entry = data.files.get(path)
         if entry is None:
             continue
-        items.append(f"{path}:")
-        used = byte_len(f"{path}:\n")
-        syms = sorted(entry.symbols, key=lambda s: (s.line, s.name))
-        for sym in syms[:10]:
+        total_lines = max((s2.end_line for s2 in entry.symbols), default=0)
+        items.append(f"{path} ({total_lines} lines):")
+        used = byte_len(items[-1]) + 1
+        syms = sorted(entry.symbols, key=lambda s2: (s2.line, s2.name))
+        # linemap: spread markers ~every 100 lines so the FIRST ranged read lands right
+        last_marked = -1000
+        for sym in syms:
+            if sym.line - last_marked < 100 and used > 0:
+                continue
             line = f"  L{sym.line} {sym.kind} {sym.signature}".rstrip()
             if byte_len(line) + used > per_file_cap:
                 break
             items.append(line)
             used += byte_len(line) + 1
+            last_marked = sym.line
         if used >= per_file_cap:
             break
     return items
@@ -258,6 +264,31 @@ def assemble(
             sections.append(Section(tag="CONTRACTS", rank=R_CONTRACTS, items=contracts))
         if snippets:
             sections.append(Section(tag="SNIPPETS", rank=R_SNIPPETS, items=snippets))
+    if issue and leads:
+        lead_dirs = {
+            str(lp).split("/")[0]
+            for lp in (getattr(l, "path", "") for l in leads)
+            if lp
+        }
+        dir_rank: dict[str, float] = {}
+        for fpath, score in pr.items():
+            d = fpath.split("/")[0] if "/" in fpath else "."
+            dir_rank[d] = max(dir_rank.get(d, 0.0), score)
+        cleared = sorted(
+            (d for d in dir_rank if d not in lead_dirs),
+            key=lambda d: (dir_rank[d], d),
+        )[:3]
+        if cleared:
+            sections.append(
+                Section(
+                    tag="CLEARANCE",
+                    rank=R_PLAN_COMPACT,
+                    items=[
+                        "CLEARED (ranked irrelevant for this task — do not explore"
+                        " without a stated reason): " + ", ".join(f"{d}/" for d in cleared)
+                    ],
+                )
+            )
     if facts:
         sections.append(
             Section(tag="LAB", rank=R_LAB, items=[f"- {fact}" for fact in facts])

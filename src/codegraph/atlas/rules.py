@@ -44,6 +44,10 @@ BASE_RULES: tuple[str, ...] = (
         "Progress-stall: same failure twice or two ineffective fixes — write one new"
         " hypothesis, act on it, or report the blocker."
     ),
+    (
+        "Scratchpad: keep facts learned, dead ends and the current hypothesis in"
+        " .codegraph/scratch.md; consult it before re-reading any file."
+    ),
     "Stop-loss: after 2 failed searches, re-read the map — do not keep guessing.",
 )
 

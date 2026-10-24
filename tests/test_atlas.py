@@ -19,6 +19,7 @@ from codegraph.atlas import assemble, builder, glossary, rules, testgraph
 from codegraph.atlas.budget import Section, pack
 from codegraph.emit import agents_md
 from codegraph.model import FileEntry, IndexData, Ref, Symbol
+from codegraph.model import DEFAULT_BUDGET_BYTES
 from codegraph.util.tokens import byte_len
 
 MT = 1_700_000_000.0  # fixed fake mtime (never emitted)
@@ -336,7 +337,7 @@ def test_rules_single_agnostic_variant():
     assert len(set(texts.values())) == 1, "rules must NOT fork per CLI"
     text = next(iter(texts.values()))
     assert text == rules.flight_rules("whatever")  # deterministic
-    assert 400 <= byte_len(text) <= 1100
+    assert 400 <= byte_len(text) <= 1200
     assert max(len(line) for line in text.split("\n")) <= rules.WRAP_WIDTH + 2
     lowered = text.lower()
     for term in ("mcp", "subagent", "sub-agent", "parallel tool", "claude", "codex", "opencode"):
@@ -514,7 +515,12 @@ def test_map_rows_byte_capped():
 
 
 def test_plan_survives_default_budget():
-    body = assemble(make_data(), "refresh token expiry breaks session open", "generic", 2048)
+    body = assemble(
+        make_data(),
+        "refresh token expiry breaks session open",
+        "generic",
+        DEFAULT_BUDGET_BYTES,
+    )
     assert "LEADS" in body, "PLAN dropped at default budget — rules grew too fat"
 
 
@@ -584,7 +590,7 @@ def test_cli_init_stats_doctor_remove_roundtrip(tmp_path, monkeypatch, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert payload["files"] == len(data.files) and payload["budget"] == 2048
+    assert payload["files"] == len(data.files) and payload["budget"] == DEFAULT_BUDGET_BYTES
     assert payload["outlines"] == "skipped"
     assert "outlines module unavailable, skipping" in captured.err
     body = agents_md.read_block(agents)

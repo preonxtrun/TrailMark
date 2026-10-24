@@ -24,6 +24,7 @@ import pytest
 
 from codegraph.atlas import assemble
 from codegraph.cache import IndexCache
+from codegraph.model import DEFAULT_BUDGET_BYTES
 from codegraph.emit.agents_md import read_block, remove_block, write_block
 from codegraph.focus.outlines import generate_top
 from codegraph.index import update
@@ -115,8 +116,8 @@ def _index(tmp_path: Path) -> tuple[IndexData, IndexCache]:
 def test_g2_determinism(tmp_path: Path):
     data, _ = _index(tmp_path)
     issue = "session refresh drops tokens on redirect"
-    a = assemble(data, issue, "generic", 2048)
-    b = assemble(data, issue, "generic", 2048)
+    a = assemble(data, issue, "generic", DEFAULT_BUDGET_BYTES)
+    b = assemble(data, issue, "generic", DEFAULT_BUDGET_BYTES)
     assert a == b, "same inputs must produce byte-identical bodies"
 
 
@@ -150,7 +151,7 @@ def test_g4_no_leakage(tmp_path: Path):
     from codegraph.focus.cli_focus import run as focus_run
 
     args = argparse.Namespace(
-        root=str(repo), issue=issue, issue_file=None, cli="generic", budget=2048, json=False
+        root=str(repo), issue=issue, issue_file=None, cli="generic", budget=DEFAULT_BUDGET_BYTES, json=False
     )
     assert focus_run(args) == 0
 

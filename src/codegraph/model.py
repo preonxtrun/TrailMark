@@ -9,7 +9,10 @@ BLOCK_START = "<!-- codegraph:start v1 -->"
 BLOCK_END = "<!-- codegraph:end -->"
 
 # Default hard cap for the injected block body, in bytes.
-DEFAULT_BUDGET_BYTES = 2048
+# 3072 ≈ 6× cheaper per byte than a mid-run file read it displaces
+# (block content replays from turn 0; a turn-5 read replays from turn 5),
+# and far below the prose-overview trap (ETH: +20% cost at 60K tokens).
+DEFAULT_BUDGET_BYTES = 3072
 
 
 @dataclass(frozen=True, slots=True)
