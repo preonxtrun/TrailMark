@@ -124,7 +124,7 @@ def run_agent(repo: Path, statement: str, model: str, timeout: int) -> tuple[str
         f"opencode run --standalone --format json --auto"
         f" --model {json.dumps(model)} {json.dumps(statement)}"
     )
-    stdout, stderr, rc = run_with_timeout(cmd, str(repo), timeout)
+    stdout, _stderr, rc = run_with_timeout(cmd, str(repo), timeout)
     return stdout, rc
 
 
