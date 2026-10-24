@@ -353,6 +353,7 @@ def main() -> int:
             "arm": arm,
             "seed": seed,
             "cli": "opencode",
+            "max_turns": args.max_turns,
             "status": "completed",
             "error": None,
             "usage": None,
