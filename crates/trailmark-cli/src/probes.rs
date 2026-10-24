@@ -28,6 +28,13 @@ pub fn probe_script(test_cmd: &str, test_target: &str) -> String {
         "#!/bin/sh\n\
          # trailmark verify probe — one call, bounded output. Run after each edit.\n\
          cd \"$(dirname \"$0\")/../..\" || exit 1\n\
+         # loop-escalation counter: long runs must see their own repetition\n\
+         N=$(cat .trailmark/.probe_count 2>/dev/null || echo 0)\n\
+         N=$((N+1))\n\
+         echo \"$N\" > .trailmark/.probe_count\n\
+         echo \"== PROBE RUN #$N ==\"\n\
+         if [ \"$N\" -ge 12 ]; then echo \"LOOP ESCALATION: 12+ probe runs — this edit-verify loop is not converging. STOP editing. Write the blocker + evidence to scratch.md, then conclude the task with what you have or report failure.\"; fi\n\
+         if [ \"$N\" -ge 20 ]; then echo \"HARD ESCALATION: conclude NOW. Output the current state, the remaining blocker, and the single next action a human should take.\"; fi\n\
          echo '== DIFF =='\n\
          git --no-pager diff --stat 2>/dev/null | tail -5\n\
          echo '== TEST =='\n\
