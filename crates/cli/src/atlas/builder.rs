@@ -184,16 +184,52 @@ fn docstring_line(path: &Path) -> String {
 
 /// Incoming resolved-reference counts per (dst_file, dst_name).
 pub fn ref_counts(data: &IndexData) -> HashMap<(String, String), usize> {
-    let mut counts: HashMap<(String, String), usize> = HashMap::new();
+    ref_counts_ref(data)
+        .into_iter()
+        .map(|((f, n), c)| ((f.to_string(), n.to_string()), c))
+        .collect()
+}
+
+/// Borrowed-key variant of [`ref_counts`] (no per-ref String clones).
+fn ref_counts_ref(data: &IndexData) -> FnvMap<(&str, &str), usize> {
+    let mut counts: FnvMap<(&str, &str), usize> = FnvMap::default();
     for r in &data.refs {
         if !r.dst_file.is_empty() {
             *counts
-                .entry((r.dst_file.clone(), r.dst_name.clone()))
+                .entry((r.dst_file.as_str(), r.dst_name.as_str()))
                 .or_insert(0) += 1;
         }
     }
     counts
 }
+
+/// Fast FNV-1a builder (short-string keys, rebuilt per call).
+#[derive(Default)]
+struct FnvBuild;
+
+impl std::hash::BuildHasher for FnvBuild {
+    type Hasher = FnvHasher;
+    fn build_hasher(&self) -> FnvHasher {
+        FnvHasher(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+#[derive(Default)]
+struct FnvHasher(u64);
+
+impl std::hash::Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+}
+
+type FnvMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FnvHasher>>;
 
 /// The file's most-referenced symbol (ties by line, then name).
 pub fn anchor_symbol(
@@ -211,6 +247,26 @@ pub fn anchor_symbol(
                 .unwrap_or(0);
             let cb = counts
                 .get(&(entry.path.clone(), b.name.clone()))
+                .copied()
+                .unwrap_or(0);
+            (Reverse(ca), a.line, a.name.as_str()).cmp(&(Reverse(cb), b.line, b.name.as_str()))
+        })
+        .cloned()
+}
+
+/// [`anchor_symbol`] over the borrowed-key count map (fast path).
+fn anchor_symbol_ref(entry: &FileEntry, counts: &FnvMap<(&str, &str), usize>) -> Option<Symbol> {
+    use std::cmp::Reverse;
+    entry
+        .symbols
+        .iter()
+        .min_by(|a, b| {
+            let ca = counts
+                .get(&(entry.path.as_str(), a.name.as_str()))
+                .copied()
+                .unwrap_or(0);
+            let cb = counts
+                .get(&(entry.path.as_str(), b.name.as_str()))
                 .copied()
                 .unwrap_or(0);
             (Reverse(ca), a.line, a.name.as_str()).cmp(&(Reverse(cb), b.line, b.name.as_str()))
@@ -283,12 +339,12 @@ pub fn hot_files(data: &IndexData, pr: Option<&HashMap<String, f64>>) -> Vec<Str
 /// MAP rows: first row per top-level dir carries the dir role (SPEC shape).
 pub fn build_map(data: &IndexData, pr: Option<&HashMap<String, f64>>) -> Vec<String> {
     let roles = dir_roles(data);
-    let counts = ref_counts(data);
+    let counts = ref_counts_ref(data);
     let mut rows: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for path in hot_files(data, pr) {
         let entry = &data.files[&path];
-        let sym = anchor_symbol(entry, &counts);
+        let sym = anchor_symbol_ref(entry, &counts);
         let mut base = format!("{}:{}", path, sym.as_ref().map_or(1, |s| s.line));
         if let Some(sym) = &sym {
             base.push(' ');
@@ -376,25 +432,24 @@ pub fn build_plan(
     let mut matched_files: HashMap<String, Vec<String>> = HashMap::new();
     let mut file_scores: HashMap<String, usize> = HashMap::new();
     for (path, entry) in &data.files {
-        let body = entry
-            .symbols
-            .iter()
-            .map(|s| {
-                format!(
-                    "{} {} {}",
-                    s.name,
-                    if s.doc.is_empty() { "" } else { &s.doc },
-                    s.signature
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_lowercase();
-        let blob = format!("{} {}", path.to_lowercase(), body);
+        let mut blob = String::with_capacity(64 + entry.symbols.len() * 32);
+        blob.push_str(&path.to_lowercase());
+        for s in &entry.symbols {
+            blob.push(' ');
+            blob.push_str(&s.name.to_lowercase());
+            if !s.doc.is_empty() {
+                blob.push(' ');
+                blob.push_str(&s.doc.to_lowercase());
+            }
+            if !s.signature.is_empty() {
+                blob.push(' ');
+                blob.push_str(&s.signature.to_lowercase());
+            }
+        }
         let mut score = 0usize;
         let mut matched: Vec<String> = Vec::new();
         for term in &terms {
-            let hits = count_occurrences(&blob, term);
+            let hits = blob.matches(term).count();
             if hits > 0 {
                 matched.push(term.clone());
                 score += hits * 2 + usize::from(path.to_lowercase().contains(term));
@@ -406,7 +461,7 @@ pub fn build_plan(
         }
     }
 
-    let counts = ref_counts(data);
+    let counts = ref_counts_ref(data);
     let mut leads: Vec<String> = Vec::new();
     let mut top_ref = String::new();
     let mut ranked: Vec<&String> = file_scores.keys().collect();
@@ -415,7 +470,7 @@ pub fn build_plan(
         if leads.len() >= 5 {
             break;
         }
-        let sym = anchor_symbol(&data.files[*path], &counts);
+        let sym = anchor_symbol_ref(&data.files[*path], &counts);
         let line_range = match &sym {
             Some(s) => format!("{}-{}", s.line, s.end_line),
             None => "1-1".to_string(),
@@ -456,14 +511,6 @@ pub fn build_plan(
     verbose.push(format!("OUTLINES: .codegraph/outlines/{top_ref}.md"));
     let compact = vec![leads[0].clone()];
     (verbose, compact)
-}
-
-/// `str.count` semantics: non-overlapping, leftmost-first.
-fn count_occurrences(haystack: &str, needle: &str) -> usize {
-    if needle.is_empty() {
-        return 0;
-    }
-    haystack.matches(needle).count()
 }
 
 /// Deterministic keyword list from the issue text: by frequency, then term.

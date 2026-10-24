@@ -36,46 +36,28 @@ pub const STOPWORDS: &[&str] = &[
 /// `len >= MIN_LEN` that are not in [`STOPWORDS`].
 pub fn tokenize(text: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for ident in ident_runs(text) {
-        for part in ident.split('_') {
-            for sub in subtoken_runs(part) {
-                let word = sub.to_lowercase();
-                if word.chars().count() >= MIN_LEN && !STOPWORDS.contains(&word.as_str()) {
-                    out.push(word);
-                }
+    for part in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if part.is_empty() {
+            continue;
+        }
+        for sub in subtoken_runs(part) {
+            // len >= MIN_LEN (chars) and not a stopword, mirroring the reference
+            if sub.chars().count() >= MIN_LEN && !STOPWORDS.contains(&sub) { // sub: &str
+                out.push(sub.to_lowercase());
             }
         }
     }
     out
 }
 
-/// `[A-Za-z_][A-Za-z0-9_]*` runs.
-fn ident_runs(text: &str) -> Vec<&str> {
-    let bytes = text.as_bytes();
-    let mut runs = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b.is_ascii_alphabetic() || b == b'_' {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            runs.push(&text[start..i]);
-        } else {
-            i += 1;
-        }
-    }
-    runs
-}
-
-/// `[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])` with Python's leftmost, first-alternative,
-/// backtracking semantics — implemented manually (regex crate has no lookahead).
-fn subtoken_runs(part: &str) -> Vec<String> {
-    let chars: Vec<char> = part.chars().collect();
-    let is_lower_digit = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
-    let mut out = Vec::new();
+/// `[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])` runs of one identifier part, as byte-slice
+/// substrings (no per-token allocation). Implements Python's leftmost,
+/// first-alternative, backtracking semantics manually (the regex crate has no
+/// lookahead).
+fn subtoken_runs(part: &str) -> Vec<&str> {
+    let chars: &[u8] = part.as_bytes();
+    let is_lower_digit = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    let mut out: Vec<&str> = Vec::new();
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
@@ -85,7 +67,7 @@ fn subtoken_runs(part: &str) -> Vec<String> {
             while j < chars.len() && is_lower_digit(chars[j]) {
                 j += 1;
             }
-            out.push(chars[i..j].iter().collect());
+            out.push(&part[i..j]);
             i = j;
         } else if c.is_ascii_uppercase() {
             // alternative 1: optional uppercase followed by [a-z0-9]+
@@ -94,7 +76,7 @@ fn subtoken_runs(part: &str) -> Vec<String> {
                 while j < chars.len() && is_lower_digit(chars[j]) {
                     j += 1;
                 }
-                out.push(chars[i..j].iter().collect());
+                out.push(&part[i..j]);
                 i = j;
             } else {
                 // alternative 2: [A-Z]+(?![a-z]) with backtracking
@@ -102,21 +84,11 @@ fn subtoken_runs(part: &str) -> Vec<String> {
                 while j < chars.len() && chars[j].is_ascii_uppercase() {
                     j += 1;
                 }
-                while j > i + 1
-                    && chars
-                        .get(j)
-                        .copied()
-                        .is_some_and(|c| c.is_ascii_lowercase())
-                {
+                while j > i + 1 && chars.get(j).copied().is_some_and(|b| b.is_ascii_lowercase()) {
                     j -= 1;
                 }
-                if j > i
-                    && !chars
-                        .get(j)
-                        .copied()
-                        .is_some_and(|c| c.is_ascii_lowercase())
-                {
-                    out.push(chars[i..j].iter().collect());
+                if j > i && !chars.get(j).copied().is_some_and(|b| b.is_ascii_lowercase()) {
+                    out.push(&part[i..j]);
                     i = j;
                 } else {
                     i += 1;
@@ -155,7 +127,10 @@ pub fn build_glossary(data: &IndexData, max_terms: usize) -> Vec<String> {
     // by (path, line, name) — invariant #1.
     let mut best: HashMap<String, (usize, Symbol)> = HashMap::new();
     for sym in data.files.values().flat_map(|f| f.symbols.iter()) {
-        let tokens = tokenize(&format!("{} {}", sym.name, sym.signature));
+        // name and signature are tokenized separately — the reference joins
+        // them with a space, which the tokenizer treats as a boundary anyway
+        let mut tokens = tokenize(&sym.name);
+        tokens.extend(tokenize(&sym.signature));
         if tokens.is_empty() {
             continue;
         }

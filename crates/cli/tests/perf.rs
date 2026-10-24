@@ -143,6 +143,22 @@ fn perf_targets_on_4001_files() {
     let t5 = Instant::now();
     let _ = codegraph_core::pagerank(&cached, 0.85, 0, None);
     println!("[prof] pagerank iters=0 (fixed cost only): {:.3}ms", t5.elapsed().as_secs_f64() * 1e3);
+    // assemble internals
+    let t5 = Instant::now();
+    let pr = codegraph_cli::atlas::builder::pagerank_scores(&cached);
+    println!("[prof] assemble/pagerank_scores: {:.3}ms", t5.elapsed().as_secs_f64() * 1e3);
+    let t5 = Instant::now();
+    let map = codegraph_cli::atlas::builder::build_map(&cached, pr.as_ref());
+    println!("[prof] assemble/build_map ({} rows): {:.3}ms", map.len(), t5.elapsed().as_secs_f64() * 1e3);
+    let t5 = Instant::now();
+    let tests = codegraph_cli::atlas::testgraph::build_tests(&cached, pr.as_ref());
+    println!("[prof] assemble/build_tests ({} rows): {:.3}ms", tests.len(), t5.elapsed().as_secs_f64() * 1e3);
+    let t5 = Instant::now();
+    let (verbose, _c) = codegraph_cli::atlas::builder::build_plan(&cached, issue, pr.as_ref());
+    println!("[prof] assemble/build_plan ({} items): {:.3}ms", verbose.len(), t5.elapsed().as_secs_f64() * 1e3);
+    let t5 = Instant::now();
+    let glo = codegraph_cli::atlas::glossary::build_glossary(&cached, 12);
+    println!("[prof] assemble/build_glossary ({} rows): {:.3}ms", glo.len(), t5.elapsed().as_secs_f64() * 1e3);
     let t6 = Instant::now();
     let _ = cache.search("shared_api computation pkg00", 64).unwrap();
     println!("[prof] cache.search alone: {:.3}ms", t6.elapsed().as_secs_f64() * 1e3);

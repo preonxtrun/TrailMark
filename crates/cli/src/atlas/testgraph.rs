@@ -20,25 +20,79 @@ pub const RUNNER_CAP: usize = 64;
 ///
 /// Detects `test_*.py` / `*_test.py`, files under `test(s)|__tests__`
 /// directories, and `*.test|spec.(ts|js|tsx|jsx|mjs|cjs)` patterns.
+/// Allocation-free (the reference lowercases the whole path; this compares
+/// case-insensitively segment by segment, same result).
 pub fn is_test_file(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    let parts: Vec<&str> = lower.split('/').collect();
-    if parts.is_empty() {
-        return false;
+    fn eq_ignore_ascii(a: &str, b: &str) -> bool {
+        a.len() == b.len()
+            && a.bytes()
+                .zip(b.bytes())
+                .all(|(x, y)| x.eq_ignore_ascii_case(&y))
     }
-    for seg in &parts[..parts.len() - 1] {
-        if matches!(*seg, "test" | "tests" | "__tests__") {
+    fn contains_ignore_ascii(hay: &str, needle: &str) -> bool {
+        let h = hay.as_bytes();
+        let n = needle.as_bytes();
+        if n.is_empty() || h.len() < n.len() {
+            return false;
+        }
+        (0..=h.len() - n.len()).any(|i| {
+            h[i..i + n.len()]
+                .iter()
+                .zip(n)
+                .all(|(x, y)| x.eq_ignore_ascii_case(y))
+        })
+    }
+    let mut segments = path.split('/').peekable();
+    while let Some(seg) = segments.next() {
+        if segments.peek().is_none() {
+            // last segment: the file name
+            let Some((_stem, ext)) = seg.rsplit_once('.') else {
+                return false;
+            };
+            if eq_ignore_ascii(ext, "py") {
+                return eq_ignore_ascii_prefix(_stem, "test_")
+                    || eq_ignore_ascii_suffix(_stem, "_test.py");
+            }
+            if eq_ignore_ascii(ext, "js")
+                || eq_ignore_ascii(ext, "jsx")
+                || eq_ignore_ascii(ext, "mjs")
+                || eq_ignore_ascii(ext, "cjs")
+                || eq_ignore_ascii(ext, "ts")
+                || eq_ignore_ascii(ext, "tsx")
+            {
+                return contains_ignore_ascii(seg, ".test.")
+                    || contains_ignore_ascii(seg, ".spec.");
+            }
+            return false;
+        }
+        // non-last segment: directory convention
+        if eq_ignore_ascii(seg, "test")
+            || eq_ignore_ascii(seg, "tests")
+            || eq_ignore_ascii(seg, "__tests__")
+        {
             return true;
         }
     }
-    let name = parts[parts.len() - 1];
-    match name.rsplit_once('.') {
-        Some((_stem, "py")) => name.starts_with("test_") || name.ends_with("_test.py"),
-        Some((_stem, "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx")) => {
-            name.contains(".test.") || name.contains(".spec.")
-        }
-        _ => false,
-    }
+    false
+}
+
+/// case-insensitive `starts_with`
+fn eq_ignore_ascii_prefix(stem: &str, prefix: &str) -> bool {
+    stem.len() >= prefix.len()
+        && stem
+            .bytes()
+            .zip(prefix.bytes())
+            .all(|(x, y)| x.eq_ignore_ascii_case(&y))
+}
+
+/// case-insensitive `ends_with`
+fn eq_ignore_ascii_suffix(stem: &str, suffix: &str) -> bool {
+    stem.len() >= suffix.len()
+        && stem
+            .bytes()
+            .zip(suffix.bytes())
+            .rev()
+            .all(|(x, y)| x.eq_ignore_ascii_case(&y))
 }
 
 /// Read at most `max_chars` characters of a file (None when unreadable).

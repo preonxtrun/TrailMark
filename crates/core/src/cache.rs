@@ -109,10 +109,13 @@ impl IndexCache {
     fn read_only(&self) -> Result<Connection, CodegraphError> {
         // same URI form as the Python reference: file:<path>?mode=ro
         let uri = format!("file:{}?mode=ro", self.db_path.display());
-        Ok(Connection::open_with_flags(
+        let con = Connection::open_with_flags(
             uri,
             OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?)
+        )?;
+        // memory-mapped I/O for the read path (pure speed; no on-disk change)
+        let _ = con.pragma_update(None, "mmap_size", 268_435_456i64);
+        Ok(con)
     }
 
     // -- persistence ---------------------------------------------------------

@@ -7,16 +7,22 @@ This ledger is the single history of what changed and what it bought.
 
 ## Fixed protocol
 
-- **Benchmark**: SWE-bench Verified, standard pipeline (official images, stock CLI, official grading).
-- **Agent under test**: opencode-hyde (`opencode run --format json --auto`, model `hyde-inference/hyde/glm-5.3-flash`).
+- **Primary dev signal — mini-bench** (`bench/minibench.py`): local, docker-free A/B on one real
+  repo (psf/requests) × 5 realistic tasks. Control (no codegraph) vs treatment (focus block),
+  tokens/task = cost. This is the per-generation iteration loop — minutes, not hours.
+- **Standard check — SWE-bench Verified** (`bench/run.py` + `bench/prepare_images.py`):
+  subset `bench/subsets/verified-5.jsonl` (5 instances, one per repo) × 2 arms × 1 seed = 10 runs.
+  Run it occasionally (before a GitHub release, or when mini-bench and expectations disagree).
+  `verified-20.jsonl` exists for a headline run if ever needed. Official eval images are NOT on
+  any registry — build locally first: `uv run python -m bench.prepare_images --ids-file
+  bench/subsets/verified-5.jsonl --workers 3`.
+- **Agent under test**: opencode-hyde (`opencode run --standalone --format json --auto`,
+  model `hyde-inference/hyde/glm-5.3-flash`).
 - **Cost metric**: **tokens/task = cost** (hyde-inference has no public pricing; $ columns are
   placeholders and informational only). Primary metrics: tokens/task, turns/task.
-- **Subset**: `bench/subsets/verified-20.jsonl` — 20 instances, stratified across all 12 repos,
-  deterministic (no RNG). Regenerate only with a documented reason; never compare across subsets.
-- **Arms**: `control` = stock container; `treatment` = container + `codegraph init && codegraph focus`.
-- **Seeds**: 2 (temperature-0 agents still vary run-to-run; 2 seeds bound the noise, 3 for headline claims).
-- **Gates**: a generation is kept only if resolve% is within −2pp of control AND tokens/task drops
-  beyond the seed-noise floor. Otherwise revert the change and document why.
+- **Seeds**: 1 for dev iterations; 2–3 for anything quoted publicly.
+- **Gates**: a generation is kept only if task success (patch produced / tests where runnable)
+  stays equal AND tokens/task drops beyond seed noise. Otherwise revert and document why.
 - **Standing reference**: the Gen-0 control run is reused by all later generations (re-run only
   when the agent model or opencode version changes).
 

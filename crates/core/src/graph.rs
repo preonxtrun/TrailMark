@@ -60,6 +60,35 @@ fn bincount(idx: &[usize], weights: &[f64], n: usize) -> Vec<f64> {
     out
 }
 
+/// Fast FNV-1a hasher: the pagerank maps are short-string keyed and rebuilt on
+/// every call; SipHash's security is irrelevant for these internal structures.
+#[derive(Default)]
+struct FnvBuild;
+
+impl std::hash::BuildHasher for FnvBuild {
+    type Hasher = FnvHasher;
+    fn build_hasher(&self) -> FnvHasher {
+        FnvHasher(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+#[derive(Default)]
+struct FnvHasher(u64);
+
+impl std::hash::Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+}
+
+type FnvMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FnvHasher>>;
+
 /// Compute file-level PageRank scores summing to ~1.0.
 ///
 /// * `damping`: damping factor (teleport probability is `1 - damping`).
@@ -76,7 +105,8 @@ pub fn pagerank(
     personalization: Option<&HashMap<String, f64>>,
 ) -> HashMap<String, f64> {
     let base: Vec<&str> = data.files.keys().map(|k| k.as_str()).collect();
-    let mut edge_weight: HashMap<(&str, &str), i64> = HashMap::new();
+    let base_set: FnvMap<&str, ()> = base.iter().map(|p| (*p, ())).collect();
+    let mut edge_weight: FnvMap<(&str, &str), i64> = FnvMap::default();
     let mut extra: Vec<&str> = Vec::new();
     for r in &data.refs {
         if r.src_file.is_empty() || r.dst_file.is_empty() {
@@ -85,10 +115,10 @@ pub fn pagerank(
         *edge_weight
             .entry((r.src_file.as_str(), r.dst_file.as_str()))
             .or_insert(0) += 1;
-        if !base.binary_search(&r.src_file.as_str()).is_ok() {
+        if !base_set.contains_key(r.src_file.as_str()) {
             extra.push(r.src_file.as_str());
         }
-        if !base.binary_search(&r.dst_file.as_str()).is_ok() {
+        if !base_set.contains_key(r.dst_file.as_str()) {
             extra.push(r.dst_file.as_str());
         }
     }
@@ -101,7 +131,7 @@ pub fn pagerank(
     if n == 0 {
         return HashMap::new();
     }
-    let index: HashMap<&str, usize> = nodes.iter().enumerate().map(|(i, p)| (*p, i)).collect();
+    let index: FnvMap<&str, usize> = nodes.iter().enumerate().map(|(i, p)| (*p, i)).collect();
 
     let pvec: Vec<f64> = match personalization.filter(|p| !p.is_empty()) {
         Some(pers) => {
