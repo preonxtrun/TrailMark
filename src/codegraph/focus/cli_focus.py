@@ -29,6 +29,12 @@ from .ranker import Lead, rank
 LOGGER = logging.getLogger(__name__)
 
 
+def effective_budget_for(budget: int, n_leads: int) -> int:
+    """G-imp4: contracts+snippets need headroom — each contracted lead displaces an
+    early full-file read (the highest replay-damage content in a run)."""
+    return max(budget, 2048 + 2200 * min(3, n_leads)) if n_leads else budget
+
+
 def run(args: argparse.Namespace) -> int:
     """Handle ``codegraph focus``; returns the process exit code.
 
@@ -55,9 +61,7 @@ def run(args: argparse.Namespace) -> int:
     cli_name = _resolve_cli(getattr(args, "cli", None))
     budget = _budget(args)
     leads = rank(data, cache, issue, k=5)
-    # G-imp4: inline lead contracts need headroom — each contracted lead displaces an
-    # early full-file read (the highest replay-damage content in a run).
-    effective_budget = max(budget, 2048 + 900 * min(3, len(leads))) if leads else budget
+    effective_budget = effective_budget_for(budget, len(leads))
     body = _assemble_body(data, leads, issue, cli_name, effective_budget)
     try:
         changed = write_block(root / AGENTS_FILENAME, body)

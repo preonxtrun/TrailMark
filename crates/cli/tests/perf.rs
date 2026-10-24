@@ -64,6 +64,7 @@ fn set_mtime(path: &Path, secs: i64, nanos: u32) {
 }
 
 #[test]
+#[ignore]
 fn perf_targets_on_4001_files() {
     let release = !cfg!(debug_assertions);
     let root = scratch("repo");

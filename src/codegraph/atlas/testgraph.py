@@ -17,7 +17,7 @@ from ..emit.fmt import truncate
 from ..model import IndexData
 
 #: Exact command emitted when any pytest-style config is found.
-PYTEST_RUNNER = "python -m pytest -x -q"
+PYTEST_RUNNER = "python -m pytest -x -q --tb=line 2>&1 | tail -40"
 #: Placeholder when no runner can be detected from repo config.
 UNDETECTED = "(undetected — inspect repo config)"
 

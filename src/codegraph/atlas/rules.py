@@ -23,12 +23,17 @@ WRAP_WIDTH = 76
 BASE_RULES: tuple[str, ...] = (
     "Consult MAP/TESTS before any search; state a concrete hypothesis before each retrieval.",
     (
+        "Work through tool calls: keep any text between them to one short line."
+        " Every turn replays all prior context — front-load discovery, batch reads,"
+        " and never read more than ~150 lines per turn."
+    ),
+    (
         "Locate candidate files with as few requests as possible; read line ranges,"
         " not whole files >200 lines; after editing, re-read only the edited range."
     ),
     (
-        "Run the exact test target from TESTS; never rerun a test that passed with"
-        " unchanged inputs."
+        "Run the exact test target from TESTS as given (its output is already bounded);"
+        " never rerun a test that passed with unchanged inputs."
     ),
     "Persist probes to one scratch file and edit it; never regenerate similar scripts.",
     (

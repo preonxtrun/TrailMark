@@ -619,7 +619,9 @@ def selftest(budget: int, issue: str, keep: bool, as_json: bool) -> int:
             _check(lambda: _check_deterministic(state["bodies"]), checks, "g2-atlas-deterministic")
             _check(lambda: _check_focus_write(state["focus_rc"], block_body), checks, "focus-write")
             _check(
-                lambda: _check_budget(block_body, int(budget), assemble, data, issue),
+                lambda: _check_budget(
+                    block_body, int(state.get("effective_budget", budget)), assemble, data, issue
+                ),
                 checks,
                 "g3-budget",
             )
@@ -673,5 +675,9 @@ def _run_pipeline(
     state["assemble"] = assemble
     state["cli_focus"] = cli_focus
     state["bodies"] = (assemble(data, issue, "generic", budget), assemble(data, issue, "generic", budget))
+    from .focus.ranker import rank as _rank
+
+    leads_n = len(_rank(cache.load(), cache, issue, k=5))
+    state["effective_budget"] = cli_focus.effective_budget_for(int(budget), leads_n)
     state["focus_rc"] = cli_focus.run(_focus_args(sandbox, issue, budget))
     state["block"] = read_block(agents)

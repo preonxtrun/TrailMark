@@ -15,6 +15,7 @@ from typing import Any
 from .. import trails
 from ..emit import fmt
 from ..model import IndexData
+from ..util.tokens import byte_len
 from . import budget, builder, glossary, rules, testgraph
 from .budget import Section, pack
 
@@ -123,6 +124,79 @@ def load_profile(root: str) -> tuple[list[str], list[str]]:
     return facts[:8], extra_rules[:6]
 
 
+#: Drop rank for inline lead contracts + surgical snippets: high displacement value —
+#: they replace early full-file reads (the highest replay-damage content in a run).
+R_CONTRACTS = 32
+R_SNIPPETS = 31
+
+
+def _contracts(data: IndexData, leads: list[Any], per_file_cap: int = 280) -> list[str]:
+    """Compact signature outlines for the top lead files (verify with one ranged read)."""
+    items: list[str] = []
+    seen: set[str] = set()
+    for lead in leads[:3]:
+        path = getattr(lead, "path", "")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        entry = data.files.get(path)
+        if entry is None:
+            continue
+        items.append(f"{path}:")
+        used = byte_len(f"{path}:\n")
+        syms = sorted(entry.symbols, key=lambda s: (s.line, s.name))
+        for sym in syms[:10]:
+            line = f"  L{sym.line} {sym.kind} {sym.signature}".rstrip()
+            if byte_len(line) + used > per_file_cap:
+                break
+            items.append(line)
+            used += byte_len(line) + 1
+        if used >= per_file_cap:
+            break
+    return items
+
+
+def _extract_snippets(data: IndexData, leads: list[Any], per_lead_cap: int = 1400) -> list[str]:
+    """Extract the best-matching symbol's BODY for the top leads (surgical context).
+
+    Displaces the agent's own early full-file reads — the highest replay-damage
+    content in a run (damage = new tokens × remaining turns). Deterministic;
+    reads only (G6 purity); capped per lead.
+    """
+    items: list[str] = []
+    seen: set[str] = set()
+    for lead in leads[:3]:
+        path = getattr(lead, "path", "")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        entry = data.files.get(path)
+        if entry is None:
+            continue
+        start = max(1, int(getattr(lead, "start_line", 1) or 1))
+        end = int(getattr(lead, "end_line", start) or start)
+        if end < start:
+            end = start
+        try:
+            source = (Path(data.root) / path).read_text(encoding="utf-8", errors="replace")
+            lines = source.splitlines()
+            chunk = lines[start - 1 : min(end, start - 1 + per_lead_cap)]
+        except OSError:
+            continue
+        if not chunk:
+            continue
+        items.append(f"{path} L{start}-{end}:")
+        used = byte_len(items[-1]) + 1
+        for line_text in chunk:
+            cost = byte_len(line_text) + 3
+            if used + cost > per_lead_cap:
+                items.append("  … (truncated — read the ranged lines for the rest)")
+                break
+            items.append("  " + line_text)
+            used += cost
+    return items
+
+
 def assemble(
     data: IndexData,
     issue: str | None,
@@ -174,10 +248,17 @@ def assemble(
     if issue:
         if leads:
             verbose, compact = _plan_from_leads(leads)
+            contracts = _contracts(data, leads)
+            snippets = _extract_snippets(data, leads)
         else:
             verbose, compact = builder.build_plan(data, issue, pr)
+            contracts, snippets = [], []
         sections.append(Section(tag="PLAN", rank=R_PLAN_VERBOSE, items=verbose))
         sections.append(Section(tag="PLAN", rank=R_PLAN_COMPACT, items=compact))
+        if contracts:
+            sections.append(Section(tag="CONTRACTS", rank=R_CONTRACTS, items=contracts))
+        if snippets:
+            sections.append(Section(tag="SNIPPETS", rank=R_SNIPPETS, items=snippets))
     if facts:
         sections.append(
             Section(tag="LAB", rank=R_LAB, items=[f"- {fact}" for fact in facts])
