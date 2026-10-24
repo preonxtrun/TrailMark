@@ -65,7 +65,7 @@ def run(args: argparse.Namespace) -> int:
     body = _assemble_body(data, leads, issue, cli_name, effective_budget)
     # G-imp-probe: write the bounded verify probe (one-call edit-verify cycles)
     try:
-        from .testgraph import detect_runner
+        from ..atlas.testgraph import detect_runner
 
         runner = detect_runner(str(Path(root)))
         if runner:

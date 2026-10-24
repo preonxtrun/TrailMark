@@ -10,8 +10,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use trailmark_cli::atlas::assemble;
-use trailmark_cli::focus::{generate_for, generate_top, Lead};
+use trailmark_cli::atlas::{assemble, assemble_with_leads};
+use trailmark_cli::focus::{effective_budget_for, generate_for, generate_top, Lead};
+use trailmark_cli::probes::write_probe;
+use trailmark_cli::trails;
 use trailmark_core::{
     build, byte_len, read_block, remove_block, update, write_block, IndexCache,
     DEFAULT_BUDGET_BYTES,
@@ -54,6 +56,9 @@ fn main() {
         Some(Cmd::Doctor) => cmd_doctor(&invocation(&root_flag, budget_flag, json_flag)),
         Some(Cmd::Watch { interval }) => {
             cmd_watch(&invocation(&root_flag, budget_flag, json_flag), interval)
+        }
+        Some(Cmd::Trails { action }) => {
+            cmd_trails(&invocation(&root_flag, budget_flag, json_flag), action)
         }
         None => {
             // no subcommand: print help like the Python reference
@@ -135,6 +140,47 @@ enum Cmd {
         #[arg(long, default_value_t = 2.0)]
         interval: f64,
     },
+    /// Stigmergic trail memory: record task file sets; trails steer future
+    /// tasks (mirrors `python -m trailmark.trails`).
+    Trails {
+        #[command(subcommand)]
+        action: TrailsAction,
+    },
+}
+
+/// Subcommands of `trailmark trails`.
+#[derive(Subcommand, Debug)]
+enum TrailsAction {
+    /// Append or update one task's trail (latest wins per id).
+    Record {
+        /// Task id (one trail line per id).
+        #[arg(long)]
+        id: String,
+        /// Comma-separated repo-relative paths.
+        #[arg(long)]
+        files: String,
+        /// Task outcome.
+        #[arg(long, value_enum)]
+        outcome: TrailsOutcome,
+    },
+    /// Delete the trails store.
+    Clear,
+}
+
+/// Admissible trail outcomes (the negative signal is "failed").
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum TrailsOutcome {
+    Solved,
+    Failed,
+}
+
+impl TrailsOutcome {
+    fn as_str(&self) -> &'static str {
+        match self {
+            TrailsOutcome::Solved => "solved",
+            TrailsOutcome::Failed => "failed",
+        }
+    }
 }
 
 /// `--cli` choices (auto resolves via the CLAUDECODE env var).
@@ -343,13 +389,23 @@ fn cmd_focus(
     // pass; the prior is handed to the assembler so the block body reuses the
     // same power iteration instead of recomputing it
     let (leads, prior) = trailmark_cli::focus::rank_and_prior(&data, &cache, &issue, 5);
-    let body = trailmark_cli::atlas::assemble_with_pagerank(
+    // G-imp4: contracts+snippets need headroom (cli_focus.effective_budget_for)
+    let budget = effective_budget_for(budget, leads.len());
+    let body = assemble_with_leads(
         &data,
         Some(&issue),
         &cli_name,
         budget,
+        Some(&leads),
         Some(&prior),
     );
+    // G-imp-probe: write the bounded verify probe (one-call edit-verify cycles)
+    if let Some(runner) =
+        trailmark_cli::atlas::testgraph::detect_runner(root.to_string_lossy().as_ref())
+    {
+        let target = leads.first().map(|l| l.path.clone()).unwrap_or_default();
+        let _ = write_probe(&root, &runner, &target);
+    }
     let changed = match write_block(&root.join(trailmark_core::AGENTS_FILENAME), &body) {
         Ok(c) => c,
         Err(e) => {
@@ -605,6 +661,56 @@ fn cmd_watch(inv: &Invocation, interval: f64) -> i32 {
             last = Some(signature);
         }
         std::thread::sleep(Duration::from_secs_f64(interval));
+    }
+}
+
+/// `trailmark trails {record,clear}`: stigmergic trail memory CLI
+/// (mirror of `python -m trailmark.trails`). Exit codes: 0 success,
+/// 2 on bad input (Python maps `ValueError` to the same code).
+fn cmd_trails(inv: &Invocation, action: TrailsAction) -> i32 {
+    let root = root_of(inv).to_string_lossy().into_owned();
+    match action {
+        TrailsAction::Record { id, files, outcome } => {
+            // Python: [part.strip() for part in str(args.files).split(",")]
+            let parts: Vec<String> = files.split(',').map(|p| p.trim().to_string()).collect();
+            match trails::record(&root, &id, &parts, outcome.as_str()) {
+                Ok(entry) => {
+                    let entries = trails::load_entries(&root).len();
+                    if inv.json {
+                        println!("{}", trails::record_payload_json(&entry, entries));
+                    } else {
+                        println!(
+                            "recorded {} ({}, {} files) — {} trail entries",
+                            entry.id,
+                            entry.outcome,
+                            entry.files.len(),
+                            entries
+                        );
+                    }
+                    0
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    2
+                }
+            }
+        }
+        TrailsAction::Clear => {
+            let removed = trails::clear(&root);
+            if inv.json {
+                println!("{}", trails::clear_payload_json(removed));
+            } else {
+                println!(
+                    "{}",
+                    if removed {
+                        "cleared trails"
+                    } else {
+                        "no trails file"
+                    }
+                );
+            }
+            0
+        }
     }
 }
 

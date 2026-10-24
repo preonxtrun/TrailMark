@@ -8,10 +8,12 @@ identical report (SPEC invariant #1).
 Usage:
     python -m bench.report --out runs/demo [--bootstrap 10000] [--seed 0]
 
-Metrics per arm: mean $/task, mean tokens/task, mean turns, cache-read share, and
+Metrics per arm: mean $/task, mean tokens/task, mean turns, cache-read share,
 resolve% when grading results are present (``graded.json`` / ``graded.<arm>.json`` —
-see :func:`load_graded`). The paired section reports treatment − control deltas per
-instance (seed-averaged) with a seeded percentile-bootstrap 95% CI over instances.
+see :func:`load_graded`), and verified-solve% when verification data is present
+(records carrying a ``verify`` object — minibench ``--verify``). The paired section
+reports treatment − control deltas per instance (seed-averaged) with a seeded
+percentile-bootstrap 95% CI over instances.
 """
 
 from __future__ import annotations
@@ -118,6 +120,39 @@ def _record_tokens(record: Mapping[str, object]) -> int | None:
         return None
 
 
+def _verified_solved(record: Mapping[str, object]) -> bool:
+    """True when the record's ``verify`` payload says the run actually solved the task.
+
+    Definition: ``verify.ran`` is true, ``verify.failed == 0``, and at least one
+    positive signal holds — ``verify.passed > 0`` or ``verify.exit == 0``. Records
+    without a ``verify`` object (``--verify`` off, legacy runs) are never
+    verified-solved.
+    """
+    verify = record.get("verify")
+    if not isinstance(verify, Mapping) or verify.get("ran") is not True:
+        return False
+    failed = verify.get("failed")
+    if not isinstance(failed, int) or isinstance(failed, bool) or failed != 0:
+        return False
+    passed = verify.get("passed")
+    exit_code = verify.get("exit")
+    passed_ok = isinstance(passed, int) and not isinstance(passed, bool) and passed > 0
+    exit_ok = isinstance(exit_code, int) and not isinstance(exit_code, bool) and exit_code == 0
+    return passed_ok or exit_ok
+
+
+def _verify_rate(records: Sequence[Mapping[str, object]]) -> float | None:
+    """Share of verified-solved runs among *records* carrying verify data (None if none).
+
+    Records without a ``verify`` object are excluded from both numerator and
+    denominator — unverified campaigns must render as "—", not as 0%.
+    """
+    flagged = [r for r in records if isinstance(r.get("verify"), Mapping)]
+    if not flagged:
+        return None
+    return sum(1 for r in flagged if _verified_solved(r)) / len(flagged)
+
+
 def _seed_mean(records: Sequence[Mapping[str, object]], key: str) -> float | None:
     """Mean of a numeric field across seeds (non-numeric/missing values excluded)."""
     values = [
@@ -164,10 +199,12 @@ def paired_report(
     """Compute the paired control-vs-treatment report (deterministic).
 
     - per arm: instance-level seed-averaged means for $/task, tokens/task, turns; the
-      aggregate cache-read share; and resolve% when grading data covers the arm.
+      aggregate cache-read share; resolve% when grading data covers the arm; and
+      verified-solve% (share of verified-solved runs among records carrying a
+      ``verify`` object) when verification data exists for the arm.
     - paired (treatment − control): per-instance seed-averaged deltas over instances
       present in BOTH arms, with a seeded percentile-bootstrap 95% CI over instances for
-      cost/tokens/turns (resolve deltas are reported without a CI).
+      cost/tokens/turns (resolve and verified-solve deltas are reported without a CI).
     - ``graded`` maps arm → {instance_id: resolved}; the ``"*"`` key (from a single-map
       ``graded.json``) applies to every arm.
     """
@@ -202,6 +239,9 @@ def paired_report(
         grades = grade_map.get(arm) or grade_map.get("*") or {}
         graded_ids = sorted(set(instances) & set(grades))
         n_resolved = sum(1 for iid in graded_ids if grades[iid])
+        arm_records = [r for rs in instances.values() for r in rs]
+        verify_flagged = [r for r in arm_records if isinstance(r.get("verify"), Mapping)]
+        n_verified = sum(1 for r in verify_flagged if _verified_solved(r))
         per_arm[arm] = {
             "n_instances": len(instances),
             "n_records": sum(len(rs) for rs in instances.values()),
@@ -212,6 +252,11 @@ def paired_report(
             "resolve_rate": _round(n_resolved / len(graded_ids)) if graded_ids else None,
             "n_graded": len(graded_ids),
             "n_resolved": n_resolved,
+            "n_verify": len(verify_flagged),
+            "n_verified_solved": n_verified,
+            "verified_solve_rate": (
+                _round(n_verified / len(verify_flagged)) if verify_flagged else None
+            ),
         }
 
     paired: dict[str, object] = {
@@ -223,11 +268,13 @@ def paired_report(
         "delta_turns": None,
         "ci95_turns": None,
         "delta_resolve_rate": None,
+        "delta_verified_solve_rate": None,
     }
     if treatment is not None:
         common = sorted(set(tree[control]) & set(tree[treatment]))
         deltas: dict[str, list[float]] = {"cost_usd": [], "tokens": [], "turns": []}
         resolve_deltas: list[float] = []
+        verified_deltas: list[float] = []
         grades_c = grade_map.get(control) or grade_map.get("*") or {}
         grades_t = grade_map.get(treatment) or grade_map.get("*") or {}
         for instance_id in common:
@@ -242,6 +289,9 @@ def paired_report(
                     deltas[metric].append(value_t - value_c)
             if instance_id in grades_c and instance_id in grades_t:
                 resolve_deltas.append(float(bool(grades_t[instance_id])) - float(bool(grades_c[instance_id])))
+            rate_c, rate_t = _verify_rate(rs_c), _verify_rate(rs_t)
+            if rate_c is not None and rate_t is not None:
+                verified_deltas.append(rate_t - rate_c)
         rng = np.random.default_rng(seed)  # one RNG, consumed in fixed metric order
         paired["instances"] = len(common)
         paired["delta_cost_usd"] = _round(_mean(deltas["cost_usd"]))
@@ -251,6 +301,7 @@ def paired_report(
         paired["delta_turns"] = _round(_mean(deltas["turns"]))
         paired["ci95_turns"] = _bootstrap_ci(deltas["turns"], bootstrap, rng)
         paired["delta_resolve_rate"] = _round(_mean(resolve_deltas))
+        paired["delta_verified_solve_rate"] = _round(_mean(verified_deltas))
 
     return {
         "n_records": len(records),
@@ -352,6 +403,13 @@ def render_markdown(report: Mapping[str, object]) -> str:
             _pct_delta(paired.get("delta_resolve_rate")),
             "—",
         ),
+        (
+            "verified-solve %",
+            _pct(ctrl.get("verified_solve_rate")),
+            _pct(trt.get("verified_solve_rate")),
+            _pct_delta(paired.get("delta_verified_solve_rate")),
+            "—",
+        ),
     ]
     lines = [
         "# trailmark bench — paired report",
@@ -369,8 +427,8 @@ def render_markdown(report: Mapping[str, object]) -> str:
         "",
         (
             f"arms: control={control} treatment={treatment or '—'} "
-            "(cache-read share and resolve% are aggregate ratios; only cost/tokens/turns "
-            "deltas carry a bootstrap CI)"
+            "(cache-read share, resolve% and verified-solve% are aggregate ratios; only "
+            "cost/tokens/turns deltas carry a bootstrap CI)"
         ),
     ]
     return "\n".join(lines) + "\n"

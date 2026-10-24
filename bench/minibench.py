@@ -10,6 +10,10 @@ Protocol per (task, arm, seed):
     2. arm setup: control → strip the trailmark block; treatment → ``trailmark focus``
     3. run stock opencode headless in the repo; parse usage via bench.cost
     4. record patch (official exclude pathspec) + usage/turns
+    5. (``--verify``) bounded benchmark-side verification: run the repo's detected
+       test runner and parse pytest-style pass/fail counts into the record
+    6. trails auto-deposit (treatment only): the patch footprint is recorded into the
+       worktree's trail store, so the next treatment run's block carries TRAILS
 
 Usage:
     uv run python -m bench.minibench --repo /path/to/repo \
@@ -22,9 +26,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from .arms import patch_cmd
@@ -35,6 +41,21 @@ from .run import DEFAULT_MODEL
 logger = logging.getLogger("bench.minibench")
 
 RESET_EXCLUDES = ["-e", ".trailmark"]
+
+#: Hard timeout (seconds) for the bounded ``--verify`` step. Verification is
+#: benchmark-side and never agent-facing, so its budget is independent of the agent's.
+VERIFY_TIMEOUT = 600
+
+#: Only the tail of the runner output is scanned for the pytest-style summary.
+VERIFY_TAIL_CHARS = 4000
+
+#: ``verify`` payload for a run whose verification did not execute (empty patch or no
+#: detectable runner; with ``--verify`` off the record carries ``verify: null`` instead).
+VERIFY_SKIPPED: dict[str, object] = {"ran": False, "passed": 0, "failed": 0, "exit": None}
+
+#: Pytest-style summary counters scanned by :func:`parse_verify_counts`.
+_PASSED_RE = re.compile(r"(\d+) passed")
+_FAILED_RE = re.compile(r"(\d+) failed")
 
 
 def _git(repo: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -56,6 +77,72 @@ def patch_extract(repo: Path) -> str:
         patch_cmd(str(repo)), shell=True, check=False, capture_output=True, text=True, timeout=120
     )
     return proc.stdout if proc.returncode == 0 else ""
+
+
+def trail_files_from_patch(patch: str) -> list[str]:
+    """Repo-relative paths a unified diff touches, from its ``+++ b/<path>`` lines.
+
+    Deletions (``+++ /dev/null``) carry no surviving path and are dropped; duplicates
+    are collapsed and the result is sorted (the trail store canonicalizes order
+    anyway). Trailing tab-separated timestamps (``+++ b/f.py\\t2026-…``) are stripped.
+    """
+    files: set[str] = set()
+    for line in patch.splitlines():
+        if not line.startswith("+++ "):
+            continue
+        path = line[len("+++ ") :].split("\t", 1)[0].strip()
+        if path.startswith("b/"):
+            files.add(path[len("b/") :])
+    return sorted(files)
+
+
+def trail_outcome(status: str, patch_bytes: int, verify: Mapping[str, object] | None) -> str:
+    """Heuristic trail outcome — honest caveat: no per-task test gating exists yet.
+
+    ``"solved"`` iff the run completed, the patch is non-empty, and the bounded
+    verification — when it ran — reported no failed tests; every other combination
+    deposits ``"failed"`` (the repellent signal: dead ends steer future tasks away).
+    """
+    if status != "completed" or patch_bytes <= 0:
+        return "failed"
+    if isinstance(verify, Mapping):
+        failed = verify.get("failed")
+        if isinstance(failed, int) and not isinstance(failed, bool) and failed > 0:
+            return "failed"
+    return "solved"
+
+
+def deposit_trail(
+    repo: Path,
+    task_id: str,
+    patch: str,
+    status: str,
+    patch_bytes: int,
+    verify: Mapping[str, object] | None,
+) -> bool:
+    """Record one task's footprint into *repo*'s trail store (best-effort).
+
+    Closes the memory loop: treatment runs deposit ``(task_id, outcome, files)`` into
+    ``.trailmark/trails.jsonl`` (one line per task id, latest wins), and the next
+    treatment run's ``trailmark focus`` reads that store and injects the TRAILS
+    section into the agent block. Control runs never reach this (guarded in
+    :func:`run_bookkeeping`). Returns True when a trail was recorded; failures are
+    logged, never raised — a deposit must not flip a completed measurement into an
+    error.
+    """
+    from trailmark.trails import record as trails_record  # lazy, like the other layer hooks
+
+    try:
+        trails_record(
+            root=str(repo),
+            task_id=task_id,
+            files=trail_files_from_patch(patch),
+            outcome=trail_outcome(status, patch_bytes, verify),
+        )
+        return True
+    except Exception:  # per-run isolation: bookkeeping is never worth a lost measurement
+        logger.exception("trail deposit failed: task=%s repo=%s", task_id, repo)
+        return False
 
 
 def _rust_binary() -> Path:
@@ -171,6 +258,47 @@ def run_with_timeout(
         return stdout, stderr, -9
 
 
+def parse_verify_counts(text: str) -> tuple[int, int]:
+    """(passed, failed) from the pytest-style summary in the tail of runner output.
+
+    Recognizes ``N passed`` / ``M failed`` (e.g. ``2 failed, 3 passed in 0.10s``); the
+    LAST occurrence of each wins (pytest prints a single final summary, and a runner
+    script that prints several naturally reports the latest). No counts → (0, 0).
+    Never raises.
+    """
+    tail = text[-VERIFY_TAIL_CHARS:]
+    passed = _PASSED_RE.findall(tail)
+    failed = _FAILED_RE.findall(tail)
+    return (int(passed[-1]) if passed else 0, int(failed[-1]) if failed else 0)
+
+
+def verify_run(repo: Path, log_path: Path, timeout: int = VERIFY_TIMEOUT) -> dict[str, object]:
+    """Bounded benchmark-side verification of a completed run.
+
+    Detects the repo's test runner via ``trailmark.atlas.testgraph.detect_runner``
+    (lazy + read-only: it only reads repo config files), executes it in *repo* under a
+    hard process-group timeout, writes the combined output to *log_path* (a side log
+    in the run dir — never into the agent stream), and parses pytest-style pass/fail
+    counts from the output tail. Returns the record's ``verify`` payload:
+    ``{"ran": True, "passed": N, "failed": M, "exit": rc}`` — or the skipped payload
+    (``ran: False``) when the repo exposes no detectable runner.
+    """
+    from trailmark.atlas.testgraph import detect_runner  # lazy + read-only
+
+    command = detect_runner(str(repo))
+    if not command:
+        return dict(VERIFY_SKIPPED)
+    stdout, stderr, rc = run_with_timeout(command, cwd=str(repo), timeout=timeout)
+    passed, failed = parse_verify_counts(stdout)
+    output = (stdout + stderr).strip() or f"(no output, exit={rc})"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(output + "\n", encoding="utf-8")
+    except OSError:
+        logger.warning("could not write verify log %s", log_path)
+    return {"ran": True, "passed": passed, "failed": failed, "exit": rc}
+
+
 def run_agent(
     repo: Path, statement: str, model: str, timeout: int, max_turns: int | None = None
 ) -> tuple[str, int]:
@@ -279,7 +407,63 @@ def load_tasks(tasks_file: Path, limit: int | None) -> list[dict]:
     return tasks[:limit] if limit else tasks
 
 
-def main() -> int:
+def run_bookkeeping(
+    wt: Path,
+    out_dir: Path,
+    task_id: str,
+    arm: str,
+    seed: int,
+    record: dict[str, object],
+    patch: str,
+    *,
+    verify_enabled: bool,
+    trails_enabled: bool,
+) -> None:
+    """Post-run bookkeeping for a finished run (mutates *record* in place; never raises).
+
+    Runs BEFORE the ``finally`` reset, so verification sees the same working tree the
+    patch was extracted from.
+
+    - ``--verify`` (opt-in): bounded benchmark-side verification of completed runs.
+      Runs with an empty patch skip verification — nothing to verify — and are
+      recorded with ``verify.ran=false``; with ``--verify`` off the record carries
+      ``verify: null`` (no verification data at all).
+    - trails auto-deposit (default; ``--no-trails`` disables): completed *treatment*
+      runs record their patch footprint into the worktree's trail store so the next
+      treatment run's block carries TRAILS; control runs never deposit.
+
+    A completed measurement stays completed: bookkeeping problems degrade to
+    ``verify: null`` / ``trail_recorded: false`` and are logged.
+    """
+    record["trail_recorded"] = False
+    record["verify"] = None
+    if record.get("status") != "completed":
+        return
+    if verify_enabled:
+        record["verify"] = dict(VERIFY_SKIPPED)
+        if int(record.get("patch_bytes") or 0) > 0:
+            log_path = out_dir / "verify" / f"{task_id}.{arm}.s{seed}.log"
+            try:
+                record["verify"] = verify_run(wt, log_path)
+            except Exception:
+                record["verify"] = None
+                logger.exception("verify failed: %s", (task_id, arm, seed))
+    if arm == "treatment" and trails_enabled:
+        try:
+            record["trail_recorded"] = deposit_trail(
+                wt,
+                task_id,
+                patch,
+                str(record.get("status")),
+                int(record.get("patch_bytes") or 0),
+                record["verify"] if isinstance(record["verify"], Mapping) else None,
+            )
+        except Exception:
+            logger.exception("trail deposit failed: %s", (task_id, arm, seed))
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point; *argv* defaults to ``sys.argv[1:]`` (injectable for tests)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--tasks", default="bench/tasks/requests-5.jsonl")
@@ -301,10 +485,26 @@ def main() -> int:
         help="treatment implementation: python in-process, or the release rust binary",
     )
     parser.add_argument("--limit", type=int, default=None, help="first N tasks only")
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "benchmark-side gating: after each completed run with a non-empty patch, run"
+            " the repo's detected test runner (bounded, 600s) and record pass/fail counts"
+        ),
+    )
+    parser.add_argument(
+        "--no-trails",
+        action="store_true",
+        help=(
+            "disable trails auto-deposit (completed treatment runs record their patch"
+            " footprint into the worktree's trail store by default)"
+        ),
+    )
     parser.add_argument("--parallel", type=int, default=1, help="concurrent runs (each gets its own git worktree)")
     parser.add_argument("--out", default="runs/minibench")
     parser.add_argument("--verbose", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -360,6 +560,8 @@ def main() -> int:
             "cost_usd": None,
             "turns": 0,
             "patch_bytes": 0,
+            "verify": None,
+            "trail_recorded": False,
             "seconds": 0.0,
         }
         try:
@@ -382,6 +584,17 @@ def main() -> int:
             record["patch_bytes"] = len(patch.encode("utf-8"))
             (out_dir / "patches").mkdir(exist_ok=True)
             (out_dir / "patches" / f"{task['id']}.{arm}.s{seed}.patch").write_text(patch)
+            run_bookkeeping(
+                wt,
+                out_dir,
+                task["id"],
+                arm,
+                seed,
+                record,
+                patch,
+                verify_enabled=args.verify,
+                trails_enabled=not args.no_trails,
+            )
         except subprocess.TimeoutExpired:
             record["status"] = "timeout"
         except Exception as exc:  # per-run isolation

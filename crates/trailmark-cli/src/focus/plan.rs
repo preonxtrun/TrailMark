@@ -118,7 +118,8 @@ mod tests {
         assert!(compact.contains("3. src/f2.py:3-12"));
         let tighter = render_plan(&leads, 200);
         assert!(byte_len(&tighter) <= 200);
-        assert!(tighter.starts_with("PLAN\nLEADS (verify, don't trust; one ranged read each, then act):"));
+        assert!(tighter
+            .starts_with("PLAN\nLEADS (verify, don't trust; one ranged read each, then act):"));
         assert_eq!(render_plan(&leads, 119), "");
         // long paths: even one compact lead exceeds a 130-byte budget → header only
         let long: Vec<Lead> = (0..2)
@@ -130,11 +131,17 @@ mod tests {
             })
             .collect();
         let header = render_plan(&long, 130);
-        assert_eq!(header, "PLAN\nLEADS (verify, don't trust; one ranged read each, then act):");
+        assert_eq!(
+            header,
+            "PLAN\nLEADS (verify, don't trust; one ranged read each, then act):"
+        );
     }
 
     #[test]
     fn render_plan_empty_leads_gives_header() {
-        assert_eq!(render_plan(&[], 400), "PLAN\nLEADS (verify, don't trust; one ranged read each, then act):");
+        assert_eq!(
+            render_plan(&[], 400),
+            "PLAN\nLEADS (verify, don't trust; one ranged read each, then act):"
+        );
     }
 }

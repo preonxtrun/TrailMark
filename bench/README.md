@@ -13,6 +13,7 @@ This package is standalone: it imports **nothing** from `src/trailmark`.
 | file | purpose |
 |---|---|
 | `run.py` | resumable, parallel campaign runner (`python -m bench.run`) |
+| `minibench.py` | docker-free local A/B mini-bench on one repo + task list (`python -m bench.minibench`) |
 | `cost.py` | usage/cost adapters per CLI + pricing table |
 | `arms.py` | arm setup steps, issue-file writer, no-leakage gate, patch pathspec |
 | `report.py` | paired control-vs-treatment stats + markdown (`python -m bench.report`) |
@@ -151,6 +152,41 @@ Report metrics: mean $/task, mean tokens/task, mean turns, cache-read share, res
 paired treatment−control deltas per instance (seed-averaged) with a seeded
 percentile-bootstrap 95% CI over instances for cost/tokens/turns. Same inputs →
 byte-identical report (deterministic, seeded `numpy.random.default_rng`).
+
+## Mini-bench: trails loop and outcome gating
+
+`python -m bench.minibench` is the fast local loop (one repo, N task statements, control
+vs treatment, tokens/turns delta — see `docs/GENERATIONS.md`). Beyond measurement it now
+closes the layer's memory loop:
+
+- **Trails auto-deposit (default; `--no-trails` disables).** After each *completed
+  treatment* run, the run's footprint is recorded into the worktree's trail store
+  (`.trailmark/trails.jsonl`): task id, outcome, and the files touched — parsed from the
+  extracted patch's `+++ b/<path>` lines. The store survives the per-run reset
+  (`.trailmark` is excluded from `git clean`), so the *next treatment run's*
+  `trailmark focus` reads the accumulated field and the injected block carries a
+  **TRAILS** section — well-trodden files rank up, failed runs surface as dead ends.
+  Control runs never deposit, so the pairing measures memory accumulation, not a static
+  block. Each record notes whether a deposit happened (`"trail_recorded": true`).
+- **Outcome gating (`--verify`, opt-in).** After each completed run with a non-empty
+  patch, minibench detects the repo's test runner
+  (`trailmark.atlas.testgraph.detect_runner`: pytest config → Makefile `test:` →
+  `package.json` → `Cargo.toml` → `go.mod`) and executes it with a hard 600s
+  process-group timeout. Output goes to `verify/<task>.<arm>.s<seed>.log` in the run dir
+  (never into the agent stream); pytest-style `N passed` / `M failed` counts parsed from
+  the output tail land in the record as
+  `"verify": {"ran": true, "passed": N, "failed": M, "exit": rc}`. Runs with an empty
+  patch skip verification (nothing to verify) but are still recorded; with `--verify`
+  off, records carry `"verify": null`.
+- **Report.** When verify data exists, the paired report gains a **verified-solve %**
+  column: the share of runs that are verified-solved — `verify.ran` and `failed == 0`
+  and (`passed > 0` or `exit == 0`) — plus the paired treatment−control delta.
+
+**Honest caveat.** The trail outcome is a *heuristic* until per-task test gating lands:
+`solved` = run completed + non-empty patch + no failed tests reported by `--verify`
+(vacuously true when `--verify` is off). A verification timeout or an undetected runner
+still deposits the optimistic outcome. `verified-solve %` is the stricter benchmark-side
+proxy — run with `--verify` whenever the target repo has a detectable runner.
 
 ## Environment variables forwarded into containers
 

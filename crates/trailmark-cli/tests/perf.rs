@@ -141,7 +141,7 @@ fn perf_targets_on_4001_files() {
             let t2 = Instant::now();
             let cached = cache.load().expect("cache present");
             let (l, prior) = rank_and_prior(&cached, &cache, issue, 5);
-            let b = assemble_with_prior(&cached, issue, &prior);
+            let b = assemble_focus_body(&cached, issue, &l, &prior);
             let elapsed = t2.elapsed();
             leads = l;
             body = b;
@@ -166,11 +166,22 @@ fn perf_targets_on_4001_files() {
     fs::remove_dir_all(&root).ok();
 }
 
-/// The focus pipeline's block assembly: atlas + PLAN with the ranker's prior.
-fn assemble_with_prior(
+/// The focus pipeline's block assembly (mirrors `cmd_focus`): leads-driven
+/// atlas + PLAN/CONTRACTS/SNIPPETS/CLEARANCE with the ranker's prior and the
+/// effective budget (`2048 + 2200·min(3, n_leads)`).
+fn assemble_focus_body(
     data: &trailmark_core::IndexData,
     issue: &str,
+    leads: &[trailmark_cli::focus::Lead],
     prior: &std::collections::HashMap<String, f64>,
 ) -> String {
-    trailmark_cli::atlas::assemble_with_pagerank(data, Some(issue), "generic", 2048, Some(prior))
+    let budget = trailmark_cli::focus::effective_budget_for(2048, leads.len());
+    trailmark_cli::atlas::assemble_with_leads(
+        data,
+        Some(issue),
+        "generic",
+        budget,
+        Some(leads),
+        Some(prior),
+    )
 }

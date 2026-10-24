@@ -496,7 +496,8 @@ pub fn build_plan(
         );
     }
 
-    let mut verbose = vec!["LEADS (verify, don't trust; one ranged read each, then act):".to_string()];
+    let mut verbose =
+        vec!["LEADS (verify, don't trust; one ranged read each, then act):".to_string()];
     verbose.extend(leads.iter().cloned());
     verbose.push(format!("OUTLINES: .trailmark/outlines/{top_ref}.md"));
     let compact = vec![leads[0].clone()];

@@ -24,7 +24,6 @@ pub const BASE_RULES: [&str; 10] = [
     "Stop-loss: after 2 failed searches, re-read the map — do not keep guessing.",
 ];
 
-
 /// Kept for API compatibility; the layer ships one agnostic variant only.
 pub const VARIANTS: [&str; 1] = ["generic"];
 
@@ -74,7 +73,10 @@ mod tests {
         assert_eq!(generic, flight_rules("claude"));
         assert!(generic.starts_with("- Consult MAP/TESTS before any search;"));
         assert!(generic.contains("- Stop-loss: after 2 failed searches"));
-        assert!(generic.lines().count() >= 18, "wrapped shape tracks the 10 bullets");
+        assert!(
+            generic.lines().count() >= 18,
+            "wrapped shape tracks the 10 bullets"
+        );
     }
 
     #[test]

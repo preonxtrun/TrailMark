@@ -75,6 +75,33 @@ pub fn wrap_default(text: &str, width: usize) -> String {
     wrap(text, width, "  ", "- ")
 }
 
+/// Python `str.splitlines()` equivalent: split on the full separator set
+/// (`\n`, `\r`, `\r\n`, `\v`, `\f`, `\x1c`–`\x1e`, `\u{85}`, U+2028/9) without
+/// keep-ends. A trailing separator does not produce a trailing empty line.
+pub fn py_splitlines(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // \r\n is one separator
+            '\r' if chars.peek() == Some(&'\n') => {
+                chars.next();
+                lines.push(std::mem::take(&mut cur));
+            }
+            '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}'
+            | '\u{2028}' | '\u{2029}' => {
+                lines.push(std::mem::take(&mut cur));
+            }
+            other => cur.push(other),
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +133,17 @@ mod tests {
         assert_eq!(estimate_tokens("abcd"), 1);
         assert_eq!(estimate_tokens("abcde"), 2);
         assert_eq!(estimate_tokens("abcdefgh"), 2);
+    }
+
+    #[test]
+    fn py_splitlines_matches_python_str_splitlines() {
+        assert_eq!(py_splitlines("a\nb"), vec!["a", "b"]);
+        assert_eq!(py_splitlines("a\n"), vec!["a"]); // no trailing empty line
+        assert_eq!(py_splitlines("a\r\nb"), vec!["a", "b"]); // \r\n is one break
+        assert_eq!(py_splitlines("a\rb"), vec!["a", "b"]);
+        assert_eq!(py_splitlines("\n"), vec![""]);
+        assert_eq!(py_splitlines(""), Vec::<String>::new());
+        assert_eq!(py_splitlines("a\n\nb"), vec!["a", "", "b"]);
+        assert_eq!(py_splitlines("a\u{2028}b\u{85}c"), vec!["a", "b", "c"]);
     }
 }

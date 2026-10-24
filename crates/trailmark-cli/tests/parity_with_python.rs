@@ -11,7 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use trailmark_cli::atlas::assemble;
+use trailmark_cli::atlas::{assemble, assemble_with_leads};
+use trailmark_cli::probes::probe_script;
 use trailmark_core::{update, IndexCache};
 
 const ISSUE: &str = "fix the session token refresh expiry handling in the client";
@@ -243,6 +244,73 @@ fn unique_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("cg_parity_{tag}_{}_{nanos}", std::process::id()));
     fs::create_dir_all(&dir).expect("parity scratch dir");
     dir
+}
+
+/// Run `tools/dump_block.py` with `args` and return the block body it printed.
+fn run_dump(uv: &Path, args: &[&str]) -> String {
+    let dump = workspace_root().join("tools/dump_block.py");
+    let mut cmd: Vec<&str> = vec!["run", "python", dump.to_str().expect("dump path")];
+    cmd.extend_from_slice(args);
+    let out = Command::new(uv)
+        .args(&cmd)
+        .current_dir(workspace_root())
+        .output()
+        .expect("run dump_block.py");
+    assert!(
+        out.status.success(),
+        "dump_block.py failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).expect("python body is utf-8")
+}
+
+/// The Rust pipeline for one sandbox: incremental index build, then the
+/// assembler (`with_leads` mirrors `trailmark focus`'s leads path).
+fn rust_block(repo: &Path, issue: Option<&str>, budget: usize, with_leads: bool) -> String {
+    let langs = trailmark_core::default_langs();
+    let cache = IndexCache::new(&repo.join(".trailmark"));
+    let data = update(
+        repo.to_str().expect("repo path"),
+        Some(&langs),
+        0,
+        Some(&cache),
+    );
+    if with_leads {
+        let (leads, prior) =
+            trailmark_cli::focus::rank_and_prior(&data, &cache, issue.expect("issue"), 5);
+        let budget = trailmark_cli::focus::effective_budget_for(budget, leads.len());
+        assemble_with_leads(&data, issue, CLI, budget, Some(&leads), Some(&prior))
+    } else {
+        assemble(&data, issue, CLI, budget)
+    }
+}
+
+/// Fail with both bodies written next to each other for easy diffing.
+fn assert_bodies_equal(tag: &str, body_py: &str, body_rs: &str, base: &Path) {
+    if body_py != body_rs {
+        let py_path = base.join(format!("body_py_{tag}.txt"));
+        let rs_path = base.join(format!("body_rs_{tag}.txt"));
+        fs::write(&py_path, body_py).expect("write py body");
+        fs::write(&rs_path, body_rs).expect("write rs body");
+        panic!(
+            "bodies differ ({tag})\nfirst difference at byte {} / line {}\n\
+             python body: {}\nrust body:   {}",
+            body_py
+                .bytes()
+                .zip(body_rs.bytes())
+                .position(|(a, b)| a != b)
+                .unwrap_or(body_py.len().max(body_rs.len())),
+            body_py
+                .lines()
+                .zip(body_rs.lines())
+                .position(|(a, b)| a != b)
+                .map(|i| i + 1)
+                .unwrap_or(0),
+            py_path.display(),
+            rs_path.display(),
+        );
+    }
+    assert_eq!(body_py, body_rs);
 }
 
 #[test]
@@ -501,5 +569,391 @@ fn rust_profile_absent_means_no_lab_section() {
         !body.contains("LAB"),
         "no profile must mean no LAB:\n{body}"
     );
+    fs::remove_dir_all(&base).ok();
+}
+
+// ---------------------------------------------------------------------------
+// leads path: PLAN from ranker leads + CONTRACTS + SNIPPETS + CLEARANCE
+// ---------------------------------------------------------------------------
+
+/// Leads parity (dump_block.py `--leads`): both pipelines rank the same leads
+/// with the same ranker algorithm, format PLAN from them (`_plan_from_leads`),
+/// and add the CONTRACTS (signature linemap, 280B/file) and SNIPPETS (lead
+/// body, 1400B/lead, truncation marker) sections. The budget also goes through
+/// `effective_budget_for` (2048 → 2048 + 2200·3 = 8648 with 3+ leads).
+#[test]
+fn parity_with_python_leads_contracts_and_snippets() {
+    let Some(uv) = uv_path() else {
+        eprintln!("parity_with_python_leads: SKIPPED — uv not found");
+        return;
+    };
+    if !python_available(&uv) {
+        eprintln!("parity_with_python_leads: SKIPPED — python unavailable");
+        return;
+    }
+    let base = unique_dir("leads");
+    let repo_py = base.join("repo_py");
+    let repo_rs = base.join("repo_rs");
+    build_repo(&repo_py);
+    build_repo(&repo_rs);
+
+    let body_py = run_dump(
+        &uv,
+        &[
+            "--root",
+            repo_py.to_str().unwrap(),
+            "--issue",
+            ISSUE,
+            "--cli",
+            CLI,
+            "--budget",
+            &BUDGET.to_string(),
+            "--leads",
+        ],
+    );
+    let body_rs = rust_block(&repo_rs, Some(ISSUE), BUDGET, true);
+
+    assert_bodies_equal("leads", &body_py, &body_rs, &base);
+    // the effective budget (2048 + 2200·min(3, n_leads)) with leads present
+    assert!(body_py.len() > 2048, "effective budget must allow headroom");
+    assert!(
+        body_py.contains("CONTRACTS"),
+        "CONTRACTS section missing:\n{body_py}"
+    );
+    assert!(
+        body_py.contains("SNIPPETS"),
+        "SNIPPETS section missing:\n{body_py}"
+    );
+    assert!(
+        body_py.contains("lines):"),
+        "contract header format missing:\n{body_py}"
+    );
+    assert!(
+        body_py.contains("  … (truncated") || body_py.contains("L"),
+        "snippet line anchors missing:\n{body_py}"
+    );
+    assert!(body_py.contains("OUTLINES: .trailmark/outlines/"));
+    fs::remove_dir_all(&base).ok();
+}
+
+/// Clearance parity: with extra top-level dirs that no lead touches, the
+/// CLEARANCE manifest (3 lowest-pagerank non-lead dirs) must be byte-identical.
+#[test]
+fn parity_with_python_clearance_manifest() {
+    const EXTRA_FILES: &[(&str, &str)] = &[
+        (
+            "docs/guide.py",
+            "\"\"\"Usage guide helpers.\"\"\"\n\n\ndef overview(topic):\n    \"\"\"Return the overview text for a topic.\"\"\"\n    return topic + 1\n",
+        ),
+        (
+            "scripts/gen.py",
+            "\"\"\"Artifact generation helpers.\"\"\"\n\n\ndef run_gen(count):\n    \"\"\"Generate the artifact set.\"\"\"\n    return count * 2\n",
+        ),
+        (
+            "misc/notes.py",
+            "\"\"\"Miscellaneous notes helpers.\"\"\"\n\n\ndef tidy(text):\n    \"\"\"Tidy up a note body.\"\"\"\n    return text.strip()\n",
+        ),
+    ];
+    let Some(uv) = uv_path() else {
+        eprintln!("parity_with_python_clearance: SKIPPED — uv not found");
+        return;
+    };
+    if !python_available(&uv) {
+        eprintln!("parity_with_python_clearance: SKIPPED — python unavailable");
+        return;
+    }
+    let base = unique_dir("clearance");
+    let repo_py = base.join("repo_py");
+    let repo_rs = base.join("repo_rs");
+    for repo in [&repo_py, &repo_rs] {
+        build_repo(repo);
+        for (rel, content) in EXTRA_FILES {
+            let path = repo.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).expect("mkdir extra dir");
+            fs::write(path, content).expect("write extra file");
+        }
+    }
+
+    let body_py = run_dump(
+        &uv,
+        &[
+            "--root",
+            repo_py.to_str().unwrap(),
+            "--issue",
+            ISSUE,
+            "--cli",
+            CLI,
+            "--budget",
+            "8192",
+            "--leads",
+        ],
+    );
+    let body_rs = rust_block(&repo_rs, Some(ISSUE), 8192, true);
+
+    assert_bodies_equal("clearance", &body_py, &body_rs, &base);
+    assert!(
+        body_py.contains("CLEARANCE"),
+        "CLEARANCE section missing:\n{body_py}"
+    );
+    assert!(
+        body_py.contains(
+            "CLEARED (ranked irrelevant for this task — do not explore without a stated reason):"
+        ),
+        "clearance manifest format missing:\n{body_py}"
+    );
+    fs::remove_dir_all(&base).ok();
+}
+
+// ---------------------------------------------------------------------------
+// trails: store byte-parity via both CLIs + TRAILS section byte-parity
+// ---------------------------------------------------------------------------
+
+/// Trails parity: the same `record` commands are issued through
+/// `python -m trailmark.trails` and the Rust `trailmark trails` subcommand —
+/// the resulting `trails.jsonl` store AND the record `--json` payloads must be
+/// byte-identical. Then the TRAILS block section (rank 7, recency-weighted hot
+/// files with exact-rational ordering + dead ends) must be byte-identical in
+/// the assembled body.
+#[test]
+fn parity_with_python_trails_store_and_section() {
+    let Some(uv) = uv_path() else {
+        eprintln!("parity_with_python_trails: SKIPPED — uv not found");
+        return;
+    };
+    if !python_available(&uv) {
+        eprintln!("parity_with_python_trails: SKIPPED — python unavailable");
+        return;
+    }
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_trailmark"));
+    let base = unique_dir("trails");
+    let repo_py = base.join("repo_py");
+    let repo_rs = base.join("repo_rs");
+    build_repo(&repo_py);
+    build_repo(&repo_rs);
+
+    // (id, files, outcome) — mixed outcomes and recency so the exact-rational
+    // hot ordering and the dead-end rule are both exercised.
+    let records: &[(&str, &str, &str)] = &[
+        ("t1", "core/api.py,app/util.py,web/client.ts", "solved"),
+        ("t2", "app/util.py", "solved"),
+        ("t3", "web/client.ts", "failed"),
+        ("t4", "app/service.py,core/api.py", "solved"),
+        ("t5", "web/index.ts", "failed"),
+    ];
+    for (id, files, outcome) in records {
+        let py = Command::new(&uv)
+            .args([
+                "run",
+                "python",
+                "-m",
+                "trailmark.trails",
+                "record",
+                "--root",
+                repo_py.to_str().unwrap(),
+                "--id",
+                id,
+                "--files",
+                files,
+                "--outcome",
+                outcome,
+                "--json",
+            ])
+            .current_dir(workspace_root())
+            .output()
+            .expect("python trails record");
+        assert!(
+            py.status.success(),
+            "{}",
+            String::from_utf8_lossy(&py.stderr)
+        );
+        let rs = Command::new(&bin)
+            .args([
+                "--root",
+                repo_rs.to_str().unwrap(),
+                "trails",
+                "record",
+                "--id",
+                id,
+                "--files",
+                files,
+                "--outcome",
+                outcome,
+                "--json",
+            ])
+            .output()
+            .expect("rust trails record");
+        assert!(
+            rs.status.success(),
+            "{}",
+            String::from_utf8_lossy(&rs.stderr)
+        );
+        // the machine-readable payload must be byte-identical
+        assert_eq!(
+            String::from_utf8(py.stdout).expect("py json"),
+            String::from_utf8(rs.stdout).expect("rs json"),
+            "record --json payload mismatch for {id}"
+        );
+    }
+
+    // the stores must be byte-identical (json.dumps sort_keys byte format)
+    let store_py = fs::read(repo_py.join(".trailmark/trails.jsonl")).expect("py store");
+    let store_rs = fs::read(repo_rs.join(".trailmark/trails.jsonl")).expect("rs store");
+    assert_eq!(store_py, store_rs, "trails.jsonl bytes differ");
+
+    // ...and the TRAILS section must be byte-identical in the assembled body
+    let body_py = run_dump(
+        &uv,
+        &[
+            "--root",
+            repo_py.to_str().unwrap(),
+            "--cli",
+            CLI,
+            "--budget",
+            "4096",
+        ],
+    );
+    let body_rs = rust_block(&repo_rs, None, 4096, false);
+    assert_bodies_equal("trails", &body_py, &body_rs, &base);
+    assert!(
+        body_py.contains("TRAILS"),
+        "TRAILS section missing:\n{body_py}"
+    );
+    assert!(body_py.contains("- core/api.py — well-trodden (2 solved tasks)"));
+    assert!(body_py.contains("- app/service.py — well-trodden (1 solved tasks)"));
+    assert!(body_py.contains("- app/util.py — well-trodden (2 solved tasks)"));
+    assert!(body_py.contains("DEAD ENDS (avoid blind retries):"));
+    assert!(body_py.contains("- web/index.ts — dead end (failed tasks)"));
+
+    // clear parity (after the body comparisons — clear removes the store)
+    let py = Command::new(&uv)
+        .args([
+            "run",
+            "python",
+            "-m",
+            "trailmark.trails",
+            "clear",
+            "--root",
+            repo_py.to_str().unwrap(),
+            "--json",
+        ])
+        .current_dir(workspace_root())
+        .output()
+        .expect("python trails clear");
+    let rs = Command::new(&bin)
+        .args([
+            "--root",
+            repo_rs.to_str().unwrap(),
+            "trails",
+            "clear",
+            "--json",
+        ])
+        .output()
+        .expect("rust trails clear");
+    assert_eq!(
+        String::from_utf8(py.stdout).expect("py json"),
+        String::from_utf8(rs.stdout).expect("rs json")
+    );
+    assert!(!repo_py.join(".trailmark/trails.jsonl").exists());
+    assert!(!repo_rs.join(".trailmark/trails.jsonl").exists());
+    fs::remove_dir_all(&base).ok();
+}
+
+// ---------------------------------------------------------------------------
+// probes: verify.sh script text parity + focus-time write
+// ---------------------------------------------------------------------------
+
+/// The Rust `probe_script` must be byte-identical to the Python reference's
+/// `trailmark.probes.probe_script` for the runner command the fixture repo
+/// detects (pytest.ini → PYTEST_RUNNER), with and without a target.
+#[test]
+fn parity_probe_script_text() {
+    let Some(uv) = uv_path() else {
+        eprintln!("parity_probe_script_text: SKIPPED — uv not found");
+        return;
+    };
+    if !python_available(&uv) {
+        eprintln!("parity_probe_script_text: SKIPPED — python unavailable");
+        return;
+    }
+    let runner = "python -m pytest -x -q --tb=line 2>&1 | tail -40";
+    for target in ["app/service.py", ""] {
+        let out = Command::new(&uv)
+            .args([
+                "run",
+                "python",
+                "-c",
+                &format!(
+                    "import sys; from trailmark.probes import probe_script; \
+                     sys.stdout.write(probe_script({runner:?}, {target:?}))"
+                ),
+            ])
+            .current_dir(workspace_root())
+            .output()
+            .expect("python probe_script");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let py = String::from_utf8(out.stdout).expect("py script utf-8");
+        let rs = probe_script(runner, target);
+        assert_eq!(
+            py, rs,
+            "probe script bytes differ (target={target:?})\npy: {py:?}\nrs: {rs:?}"
+        );
+    }
+}
+
+/// Rust-only end-to-end: `trailmark focus` writes `.trailmark/probes/verify.sh`
+/// with the exact probe_script bytes for the detected runner, target = the top
+/// lead's path, mode 0755 (mirrors the cli_focus probe flow).
+#[test]
+fn rust_focus_writes_verify_probe() {
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_trailmark"));
+    let base = unique_dir("probe_e2e");
+    let repo = base.join("repo");
+    build_repo(&repo); // fixture contains pytest.ini → PYTEST_RUNNER detected
+    let root_arg = format!("--root={}", repo.display());
+    let init = Command::new(&bin)
+        .args([&root_arg, "init"])
+        .output()
+        .expect("init");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let focus = Command::new(&bin)
+        .args([&root_arg, "focus", ISSUE, "--json"])
+        .output()
+        .expect("focus");
+    assert!(
+        focus.status.success(),
+        "{}",
+        String::from_utf8_lossy(&focus.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&focus.stdout).expect("focus --json payload");
+    let lead_path = report["leads"][0]["path"].as_str().expect("top lead path");
+
+    let probe_path = repo.join(".trailmark/probes/verify.sh");
+    let written = fs::read_to_string(&probe_path).expect("probe written at focus");
+    assert_eq!(
+        written,
+        probe_script(
+            "python -m pytest -x -q --tb=line 2>&1 | tail -40",
+            lead_path
+        ),
+        "probe bytes must equal probe_script(runner, top-lead path)"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&probe_path)
+            .expect("stat probe")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755, "probe must be executable");
+    }
     fs::remove_dir_all(&base).ok();
 }
