@@ -181,12 +181,16 @@ def run_agent(repo: Path, statement: str, model: str, timeout: int) -> tuple[str
 
 
 def ensure_worktrees(repo: Path, out_dir: Path, count: int) -> list[Path]:
-    """One git worktree per parallel worker (detached at HEAD), reused across reruns."""
-    wt_root = out_dir / "worktrees"
+    """One git worktree per parallel worker (detached at HEAD), reused across reruns.
+
+    Paths are ABSOLUTE: `git worktree add` resolves relative targets against the
+    repo root, which would silently create worktrees inside the repo under test.
+    """
+    wt_root = (Path.cwd() / out_dir / "worktrees").resolve()
     wt_root.mkdir(parents=True, exist_ok=True)
     paths = []
     for i in range(count):
-        wt = wt_root / f"wt{i}"
+        wt = (wt_root / f"wt{i}").resolve()
         if not wt.is_dir():
             proc = subprocess.run(
                 ["git", "-C", str(repo), "worktree", "add", "--detach", str(wt), "HEAD"],
