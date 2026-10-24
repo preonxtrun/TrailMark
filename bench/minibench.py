@@ -82,6 +82,19 @@ def arm_setup(repo: Path, arm: str, statement: str, model: str, budget: int) -> 
     rc = cli_focus.run(args)
     if rc != 0:
         raise RuntimeError(f"codegraph focus failed rc={rc}")
+    # Protect the layer's footprint from the agent's own git hygiene (with --auto the
+    # agent can run git clean; untracked .codegraph/ would be swept). .git/info/exclude
+    # is local-only: no repo pollution, clean patches, and cleans stop deleting state.
+    exclude = repo / ".git" / "info" / "exclude"
+    try:
+        current = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+        needed = [entry for entry in (".codegraph/", "AGENTS.md") if entry not in current]
+        if needed:
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            with exclude.open("a", encoding="utf-8") as fh:
+                fh.write("\n# codegraph layer (local)\n" + "\n".join(needed) + "\n")
+    except OSError:
+        logger.warning("could not update .git/info/exclude")
 
 
 def run_with_timeout(

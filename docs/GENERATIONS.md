@@ -92,6 +92,23 @@ uv run python -m bench.report --out runs/gen0   # paired deltas + bootstrap CI
 
 Then fill the Gen-N entry above from `bench.report` output and commit.
 
+## Gen 0.1 — orientation suite: FIRST PAIRED RESULT — verdict: KEEP
+
+- **date**: 2026-10-24 · **commit**: `8f8d7e1` (layer v0.1, single agnostic rules variant)
+- **suite**: `requests-orient-3.jsonl` (3 orientation tasks) × control/treatment × 1 seed
+- **result**: tokens/task **53,106 → 19,554 (−63%)**, CI [−44K, −23K] (excludes 0);
+  turns/task **6.0 → 2.7 (−55%)**, CI [−5.0, −2.0]; all 6 runs completed; treatment init 0.4s
+- **analysis** (`bench.analyze`): control runs re-read the same file up to 3×
+  (`subsumed-read` ×3-4 per run, `repeat-command` ×2-3); treatment runs went straight
+  to target in 2 turns. Weakest case `orient-redirect-auth` (−25%) — header-trace spans
+  files the map only partially covers.
+- **diagnosed during run**: the agent (with --auto) ran git hygiene that deleted
+  `.codegraph/` → index rebuilt per task (0.4s, no token cost). Fixed bench-side:
+  layer footprint registered in `.git/info/exclude`. Candidate for `codegraph init`
+  (`--protect`) in a later generation.
+- **verdict**: **KEEP** — H4 confirmed (orientation = map's home turf). Directionally
+  strong (n=3, 1 seed); confirmation on the bugfix suite pending (costlier: ~0.5-1M tokens).
+
 ## Iteration backlog (from the v0 baseline datapoint)
 
 First real control run (no codegraph, `req-redirect-cookies`): **89 turns, 250K input +
