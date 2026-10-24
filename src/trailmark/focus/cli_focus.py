@@ -75,6 +75,14 @@ def run(args: argparse.Namespace) -> int:
             write_probe(root, runner, target)
     except Exception:  # probe is an optimization, never a failure
         logging.getLogger(__name__).debug("probe write skipped", exc_info=True)
+    # Baseline snapshots (profile-gated, opt-in): run `baseline:` commands BEFORE the
+    # agent starts and store the bounded output — the agent then reads only the DELTA.
+    try:
+        from .profile_cmds import run_baselines
+
+        run_baselines(root)
+    except Exception:  # baseline is an optimization, never a failure
+        logging.getLogger(__name__).debug("baseline skipped", exc_info=True)
     try:
         changed = write_block(root / AGENTS_FILENAME, body)
     except OSError:

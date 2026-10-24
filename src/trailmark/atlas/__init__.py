@@ -293,6 +293,13 @@ def assemble(
         sections.append(
             Section(tag="LAB", rank=R_LAB, items=[f"- {fact}" for fact in facts])
         )
+    baseline_path = Path(data.root) / ".trailmark" / "baseline.txt"
+    try:
+        baseline_lines = baseline_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        baseline_lines = []
+    if baseline_lines:
+        sections.append(Section(tag="BASELINE", rank=R_LAB + 1, items=baseline_lines[:46]))
     trail_items = trails.section_items(data.root)
     if trail_items:
         sections.append(Section(tag="TRAILS", rank=R_TRAILS, items=trail_items))
