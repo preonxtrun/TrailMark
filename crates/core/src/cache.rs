@@ -61,6 +61,22 @@ pub enum CodegraphError {
     Path(PathBuf),
 }
 
+/// Fast FNV-1a hasher for internal short-string maps (hot per-row lookups).
+#[derive(Default)]
+pub(crate) struct FnvHasher(u64);
+
+impl std::hash::Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+}
+
 /// True when an existing fts table predates the line/kind columns.
 fn fts_outdated(con: &Connection) -> bool {
     let mut stmt = match con.prepare("PRAGMA table_info(fts)") {
@@ -126,7 +142,13 @@ impl IndexCache {
             return None;
         }
         let con = self.read_only().ok()?;
-        let mut files: HashMap<String, FileEntry> = HashMap::new();
+        // FNV + capacity reservations: 20k+ rows stream through here on every
+        // focus/update; SipHash and rehashing dominate otherwise.
+        let mut files: std::collections::HashMap<
+            String,
+            FileEntry,
+            std::hash::BuildHasherDefault<FnvHasher>,
+        > = std::collections::HashMap::with_capacity(1024);
         {
             let mut stmt = con
                 .prepare("SELECT path, lang, mtime, size FROM files")
@@ -175,7 +197,7 @@ impl IndexCache {
                 }
             }
         }
-        let mut refs: Vec<Ref> = Vec::new();
+        let mut refs: Vec<Ref> = Vec::with_capacity(1024);
         {
             let mut stmt = con
                 .prepare("SELECT src_file, dst_name, dst_file, line FROM refs")

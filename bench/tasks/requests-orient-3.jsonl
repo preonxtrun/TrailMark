@@ -1,0 +1,3 @@
+{"id": "orient-pool", "statement": "Where is HTTP connection pooling implemented in this repo, and which class owns the pool? Answer with file:line references and a one-paragraph explanation. Do not modify any code."}
+{"id": "orient-redirect-auth", "statement": "Trace what happens to the Authorization header when a request is redirected to a different host. Point to the exact code paths (file:line) that strip or keep it. Do not modify any code."}
+{"id": "orient-params", "statement": "Which function normalizes and encodes query parameters before a request is sent, and what are its public entry points? Answer with file:line references only. Do not modify any code."}

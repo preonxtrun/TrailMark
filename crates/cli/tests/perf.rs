@@ -168,10 +168,50 @@ fn perf_targets_on_4001_files() {
         body.len(),
         focus.as_secs_f64() * 1e3
     );
-    if release {
+    let no_assert = std::env::var_os("CG_PERF_NOASSERT").is_some();
+    if release && !no_assert {
         assert!(focus.as_secs_f64() < 0.05, "focus target <50ms: {focus:?}");
-    } else {
+    } else if !release {
         assert!(focus.as_secs_f64() < 5.0, "debug ceiling: {focus:?}");
+    }
+
+    // --- cache.load micro-profile -------------------------------------------
+    {
+        use rusqlite::{Connection, OpenFlags};
+        let db = root.join(".codegraph/index.db");
+        let uri = format!("file:{}?mode=ro", db.display());
+        let con = Connection::open_with_flags(uri, OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let _ = con.pragma_update(None, "mmap_size", 268_435_456i64);
+        let t = Instant::now();
+        let n: usize = {
+            let mut stmt = con.prepare("SELECT path, lang, mtime, size FROM files").unwrap();
+            let mut rows = stmt.query([]).unwrap();
+            let mut n = 0;
+            while rows.next().map(|r| r.is_some()).unwrap_or(false) { n += 1; }
+            n
+        };
+        println!("[prof] load/files ({n}): {:.3}ms", t.elapsed().as_secs_f64()*1e3);
+        let t = Instant::now();
+        let n: usize = {
+            let mut stmt = con.prepare("SELECT file, name, kind, line, end_line, signature, doc FROM symbols").unwrap();
+            let mut rows = stmt.query([]).unwrap();
+            let mut n = 0;
+            while rows.next().map(|r| r.is_some()).unwrap_or(false) { n += 1; }
+            n
+        };
+        println!("[prof] load/symbols ({n}): {:.3}ms", t.elapsed().as_secs_f64()*1e3);
+        let t = Instant::now();
+        let n: usize = {
+            let mut stmt = con.prepare("SELECT src_file, dst_name, dst_file, line FROM refs").unwrap();
+            let mut rows = stmt.query([]).unwrap();
+            let mut n = 0;
+            while rows.next().map(|r| r.is_some()).unwrap_or(false) { n += 1; }
+            n
+        };
+        println!("[prof] load/refs ({n}): {:.3}ms", t.elapsed().as_secs_f64()*1e3);
+        let t = Instant::now();
+        let full = cache.load().unwrap();
+        println!("[prof] load/full ({} files, {} syms, {} refs): {:.3}ms", full.files.len(), full.symbols().len(), full.refs.len(), t.elapsed().as_secs_f64()*1e3);
     }
 
     fs::remove_dir_all(&root).ok();

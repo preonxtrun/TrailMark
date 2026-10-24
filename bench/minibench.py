@@ -172,6 +172,9 @@ def main() -> int:
                         reset_repo(repo)
                         arm_setup(repo, arm, task["statement"], args.model, args.budget)
                         stdout, rc = run_agent(repo, task["statement"], args.model, args.timeout)
+                        streams_dir = out_dir / "streams"
+                        streams_dir.mkdir(exist_ok=True)
+                        (streams_dir / f"{task['id']}.{arm}.s{seed}.jsonl").write_text(stdout)
                         usage = parse_usage("opencode", stdout.splitlines(), model=args.model)
                         record["usage"] = usage.as_dict()
                         record["turns"] = usage.turns

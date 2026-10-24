@@ -28,6 +28,27 @@ The injected `AGENTS.md` block is byte-budgeted (default 2048 bytes), hash-stabl
 by `<!-- codegraph:start v1 -->` / `<!-- codegraph:end -->` markers. Nothing outside the markers
 is ever touched.
 
+## Real workflows
+
+One-time per repo:
+
+```bash
+codegraph init
+# keep the map fresh automatically on every commit:
+printf '#!/bin/sh\ncommand -v codegraph >/dev/null && codegraph init --quiet --root "$(git rev-parse --show-toplevel)" &\n' > .git/hooks/post-commit && chmod +x .git/hooks/post-commit
+```
+
+Per task (any coding CLI, no wrapper needed — the CLI reads the files on its own):
+
+```bash
+codegraph focus "implement retry logic for failed uploads in the sync module"
+# then just launch your CLI (opencode / codex / claude code) as usual
+```
+
+Quality-of-life checks: `codegraph doctor` (cache freshness, block present, budget ok) and
+`codegraph stats`. To measure the effect on your own workflow: `python -m bench.minibench`
+(see `docs/GENERATIONS.md`).
+
 ## Benchmark (SWE-bench Verified, standard pipeline)
 
 See `bench/README.md`. Control arm = stock container; treatment arm = container + one setup

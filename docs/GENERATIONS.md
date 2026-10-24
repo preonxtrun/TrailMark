@@ -91,3 +91,17 @@ uv run python -m bench.report --out runs/gen0   # paired deltas + bootstrap CI
 ```
 
 Then fill the Gen-N entry above from `bench.report` output and commit.
+
+## Mini-bench generations (primary loop)
+
+```bash
+# one generation = change codegraph → treatment re-run → analyze → ledger entry
+uv run python -m bench.minibench --repo /tmp/opencode/demo-target/requests \
+  --tasks bench/tasks/requests-5.jsonl --arm control,treatment --seeds 1 \
+  --out runs/mini<gen>            # control is cached/resumable after the first run
+uv run python -m bench.analyze --out runs/mini<gen>   # waste table + arm comparison
+```
+
+Other task suites stress different mechanisms: `requests-orient-3.jsonl` (atlas/preflight),
+`requests-feature-3.jsonl` (edit discipline + rules). Always re-run the arm you changed only —
+the standing control reference is reused.
