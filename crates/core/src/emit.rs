@@ -76,9 +76,7 @@ pub fn remove_block(path: &Path) -> io::Result<bool> {
         (Some(s), Some(e)) if e >= s => (s, e),
         _ => return Ok(false),
     };
-    let new_text = existing[..start]
-        .to_string()
-        + &existing[end + BLOCK_END.len()..];
+    let new_text = existing[..start].to_string() + &existing[end + BLOCK_END.len()..];
     let new_text = new_text.trim_start_matches('\n');
     if !new_text.trim().is_empty() {
         fs::write(path, new_text)?;
@@ -108,7 +106,10 @@ mod tests {
     #[test]
     fn render_wraps_body_with_markers() {
         let out = render("RULES\n- x");
-        assert_eq!(out, "<!-- codegraph:start v1 -->\nRULES\n- x\n<!-- codegraph:end -->");
+        assert_eq!(
+            out,
+            "<!-- codegraph:start v1 -->\nRULES\n- x\n<!-- codegraph:end -->"
+        );
         // trailing newline in body is trimmed
         assert_eq!(render("body\n"), render("body"));
     }
@@ -119,12 +120,19 @@ mod tests {
         let path = dir.join("AGENTS.md");
         assert!(write_block(&path, "v1").unwrap());
         assert_eq!(fs::read_to_string(&path).unwrap(), render("v1") + "\n");
-        assert!(!write_block(&path, "v1").unwrap(), "identical body is a no-op");
+        assert!(
+            !write_block(&path, "v1").unwrap(),
+            "identical body is a no-op"
+        );
         assert!(write_block(&path, "v2").unwrap());
         assert_eq!(fs::read_to_string(&path).unwrap(), render("v2") + "\n");
 
         // content outside markers is preserved; the block stays at the top
-        fs::write(&path, format!("preamble\n{}\nbody\n{}\nfooter\n", BLOCK_START, BLOCK_END)).unwrap();
+        fs::write(
+            &path,
+            format!("preamble\n{}\nbody\n{}\nfooter\n", BLOCK_START, BLOCK_END),
+        )
+        .unwrap();
         assert!(write_block(&path, "v3").unwrap());
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("preamble\n"));
@@ -151,7 +159,11 @@ mod tests {
         assert!(!p.exists(), "empty remainder unlinks the file");
 
         let q = dir.join("doc.md");
-        fs::write(&q, format!("{}\nbody\n{}\nkeep me\n", BLOCK_START, BLOCK_END)).unwrap();
+        fs::write(
+            &q,
+            format!("{}\nbody\n{}\nkeep me\n", BLOCK_START, BLOCK_END),
+        )
+        .unwrap();
         assert!(remove_block(&q).unwrap());
         assert_eq!(fs::read_to_string(&q).unwrap(), "keep me\n");
         assert!(!remove_block(&q).unwrap());

@@ -142,7 +142,10 @@ fn test_proximity(data: &IndexData, tokens: &[String]) -> HashMap<String, f64> {
             haystack.push(' ');
             haystack.push_str(&s.name.to_lowercase());
         }
-        let matched = tokens.iter().filter(|t| haystack.contains(t.as_str())).count();
+        let matched = tokens
+            .iter()
+            .filter(|t| haystack.contains(t.as_str()))
+            .count();
         if matched > 0 {
             raw.insert(path.clone(), matched as f64);
         }
@@ -191,12 +194,21 @@ fn why_text(data: &IndexData, sym: &Symbol) -> String {
         format!("{enclosing}.{}", sym.name)
     };
     let role = if !sym.doc.is_empty() {
-        sym.doc.split_whitespace().collect::<Vec<_>>().join(" ").trim_end_matches('.').to_string()
+        sym.doc
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim_end_matches('.')
+            .to_string()
     } else {
         String::new()
     };
     let role = if role.is_empty() {
-        let mut sig = sym.signature.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut sig = sym
+            .signature
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         for prefix in ["async def ", "def ", "class "] {
             if let Some(rest) = sig.strip_prefix(prefix) {
                 sig = rest.to_string();
@@ -246,7 +258,11 @@ fn best_symbol(
             .count()
     };
     syms.into_iter().min_by(|a, b| {
-        (Reverse(overlap(a)), a.line, a.name.as_str()).cmp(&(Reverse(overlap(b)), b.line, b.name.as_str()))
+        (Reverse(overlap(a)), a.line, a.name.as_str()).cmp(&(
+            Reverse(overlap(b)),
+            b.line,
+            b.name.as_str(),
+        ))
     })
 }
 
@@ -395,7 +411,13 @@ mod tests {
         assert!(tokens.contains(&"refresh".to_string()));
         assert!(tokens.contains(&"bug".to_string()));
         assert!(!tokens.contains(&"the".to_string()));
-        assert_eq!(tokens.len(), tokens.iter().collect::<std::collections::HashSet<_>>().len());
+        assert_eq!(
+            tokens.len(),
+            tokens
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        );
     }
 
     #[test]
@@ -435,7 +457,11 @@ mod tests {
                 }],
             },
         );
-        let data = IndexData { root: "/r".into(), files, refs: vec![] };
+        let data = IndexData {
+            root: "/r".into(),
+            files,
+            refs: vec![],
+        };
         let sym = data.files["a.py"].symbols[0].clone();
         let why = why_text(&data, &sym);
         assert!(why.chars().count() <= WHY_MAX, "{}", why.len());
@@ -453,13 +479,38 @@ mod tests {
                 mtime: 1.0,
                 size: 1,
                 symbols: vec![
-                    Symbol { file: "a.py".into(), name: "Outer".into(), kind: "class".into(), line: 1, end_line: 50, ..Default::default() },
-                    Symbol { file: "a.py".into(), name: "Inner".into(), kind: "class".into(), line: 10, end_line: 20, ..Default::default() },
-                    Symbol { file: "a.py".into(), name: "method".into(), kind: "method".into(), line: 12, end_line: 14, ..Default::default() },
+                    Symbol {
+                        file: "a.py".into(),
+                        name: "Outer".into(),
+                        kind: "class".into(),
+                        line: 1,
+                        end_line: 50,
+                        ..Default::default()
+                    },
+                    Symbol {
+                        file: "a.py".into(),
+                        name: "Inner".into(),
+                        kind: "class".into(),
+                        line: 10,
+                        end_line: 20,
+                        ..Default::default()
+                    },
+                    Symbol {
+                        file: "a.py".into(),
+                        name: "method".into(),
+                        kind: "method".into(),
+                        line: 12,
+                        end_line: 14,
+                        ..Default::default()
+                    },
                 ],
             },
         );
-        let data = IndexData { root: "/r".into(), files, refs: vec![] };
+        let data = IndexData {
+            root: "/r".into(),
+            files,
+            refs: vec![],
+        };
         let sym = data.files["a.py"].symbols[2].clone();
         assert_eq!(enclosing_class(&data, &sym), "Inner");
         assert!(!is_test_file("a.py"));

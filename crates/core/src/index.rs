@@ -16,7 +16,10 @@ use crate::scanner::{self, ScannedFile};
 /// Normalize a language list (default: all default languages).
 pub fn norm_langs(langs: Option<&[String]>) -> Vec<String> {
     match langs {
-        None => scanner::DEFAULT_LANGS.iter().map(|s| s.to_string()).collect(),
+        None => scanner::DEFAULT_LANGS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         Some(list) => {
             let mut out: Vec<String> = list
                 .iter()

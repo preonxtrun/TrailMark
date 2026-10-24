@@ -435,31 +435,72 @@ def parse_codex(lines: Sequence[str]) -> Usage:
     return _parse_generic(lines)
 
 
-def parse_opencode(lines: Sequence[str]) -> Usage:
-    """Parse ``opencode run`` output defensively (opencode CLI).
+def parse_opencode(lines: Sequence[str], model: str | None = None) -> Usage:
+    """Parse ``opencode run --format json`` JSONL — verified against opencode v2.1.4.
 
-    Assumptions: opencode prints human-readable text unless JSON output is requested; when
-    JSON message parts are emitted, assistant messages look like
-    ``{"type":"message.updated","info":{"role":"assistant","modelID":...,"tokens":{
-    "input":..,"output":..,"cache":{"read":..,"write":..}},"cost":<float>}}`` where the
-    ``tokens`` object is PER-MESSAGE usage → scanned dicts are SUMMED. ``turns`` counts
-    ``role=="assistant"`` messages (fallback: usage-bearing events).
-    ``reported_cost_usd`` is the sum of numeric ``cost`` fields. The scanner also accepts
-    openai-style ``input_tokens``/``output_tokens`` dicts. Plain-text/garbage lines are
-    ignored; if no usage is found in non-empty output, tokens degrade to a char/4 estimate
-    (``Usage.estimated``). Never raises on unexpected lines.
+    Verified event shape (one JSON object per line)::
+
+        {"type":"step_start"|"text"|"tool"|"step_finish", "timestamp":...,
+         "sessionID":"ses_..", "part":{...}}
+
+    Each assistant step emits one ``step_finish`` whose ``part`` carries PER-STEP
+    usage: ``{"type":"step-finish","reason":"tool-calls"|"stop","cost":<float>,
+    "tokens":{"input":..,"output":..,"reasoning":..,"cache":{"read":..,"write":..}}}``.
+    Usages are SUMMED across steps (input includes re-read context per request).
+    ``reasoning`` tokens are billed as output (provider convention, mirrors the
+    codex adapter). ``turns`` counts ``step_finish`` events. The stream carries no
+    model id → *model* is injected by the caller (``run.py --model``).
+    ``part.cost`` (0 for models without public pricing) is summed into
+    ``reported_cost_usd``. Falls back to the generic defensive scanner (older
+    storage shapes / plain text) when no ``step_finish`` events are found.
+    Never raises on unexpected lines.
     """
-    return _parse_generic(lines)
+    objs = list(_iter_json(lines))
+    input_tokens = cache_read = cache_write = output_tokens = turns = 0
+    reported = 0.0
+    found = False
+    for obj in objs:
+        if not isinstance(obj, dict) or obj.get("type") != "step_finish":
+            continue
+        part = obj.get("part")
+        tokens = part.get("tokens") if isinstance(part, dict) else None
+        if not isinstance(tokens, dict) or not tokens:
+            continue
+        found = True
+        input_tokens += int(tokens.get("input") or 0)
+        output_tokens += int(tokens.get("output") or 0) + int(tokens.get("reasoning") or 0)
+        cache = tokens.get("cache")
+        cache = cache if isinstance(cache, dict) else {}
+        cache_read += int(cache.get("read") or 0)
+        cache_write += int(cache.get("write") or 0)
+        turns += 1
+        cost = part.get("cost") if isinstance(part, dict) else None
+        if isinstance(cost, (int, float)):
+            reported += float(cost)
+    if not found:
+        usage = _parse_generic(lines)
+        if model and not usage.model:
+            usage.model = model
+        return usage
+    return Usage(
+        model=model,
+        input_tokens=input_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        output_tokens=output_tokens,
+        turns=turns,
+        reported_cost_usd=reported if reported else None,
+    )
 
 
-def parse(cli: str, lines: Sequence[str]) -> Usage:
+def parse(cli: str, lines: Sequence[str], model: str | None = None) -> Usage:
     """Dispatch to the adapter for ``cli``; unknown CLIs get the defensive generic scanner."""
     if cli == "claude":
         return parse_claude(lines)
     if cli == "codex":
         return parse_codex(lines)
     if cli == "opencode":
-        return parse_opencode(lines)
+        return parse_opencode(lines, model=model)
     logger.debug("no adapter for cli %r — using the generic defensive scanner", cli)
     return _parse_generic(lines)
 

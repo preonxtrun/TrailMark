@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import threading
 import time
@@ -81,8 +82,12 @@ ENV_PASSTHROUGH: tuple[str, ...] = (
 AGENTS: dict[str, str] = {
     "claude": "claude -p --output-format stream-json --max-turns 80",
     "codex": "codex exec --json -",
-    "opencode": "opencode run",
+    "opencode": "opencode run --standalone --format json --auto",
 }
+
+#: Default agent model for CLIs whose invocation takes an explicit model (opencode).
+#: Verified against `opencode run --help` (v2.1.4) and the models catalog.
+DEFAULT_MODEL = "hyde-inference/hyde/glm-5.3-flash"
 
 
 class CampaignError(RuntimeError):
@@ -114,6 +119,7 @@ class RunConfig:
     src_container: str
     timeout: int
     dataset: str
+    model: str = DEFAULT_MODEL
 
 
 # --------------------------------------------------------------------------
@@ -360,6 +366,18 @@ def _docker_run(image: str, name: str, cfg: RunConfig) -> None:
         "-v",
         f"{cfg.src_host}:{cfg.src_container}",
     ]
+    if cfg.cli == "opencode":
+        # The agent inside the container needs the host's opencode auth/config
+        # (provider credentials live in the host user's opencode state dir).
+        # Read-only mounts, each skipped when absent on the host. Images run as
+        # root, so the container side is /root.
+        for host_rel, container_path in (
+            (".local/share/opencode", "/root/.local/share/opencode"),
+            (".config/opencode", "/root/.config/opencode"),
+        ):
+            host_dir = Path.home() / host_rel
+            if host_dir.is_dir():
+                cmd += ["-v", f"{host_dir}:{container_path}:ro"]
     for key in ENV_PASSTHROUGH:
         if os.environ.get(key):
             cmd += ["-e", key]
@@ -489,12 +507,24 @@ def run_task(task: Task, cfg: RunConfig) -> dict[str, object]:
         stdout = ""
         status, error = "completed", None
         try:
+            agent_cmd = AGENTS[cfg.cli]
+            stdin_text = issue_text
+            if cfg.cli == "opencode":
+                # Verified invocation (opencode v2.1.4): the issue is a positional
+                # argument (multi-line safe via shlex), the JSON stream carries
+                # per-step usage in step_finish events. --auto approves tool
+                # permissions for unattended runs.
+                agent_cmd = (
+                    f"{agent_cmd} --model {shlex.quote(cfg.model)}"
+                    f" {shlex.quote(issue_text or '')}"
+                )
+                stdin_text = None
             proc = _exec(
                 name,
-                AGENTS[cfg.cli],
+                agent_cmd,
                 timeout=cfg.timeout,
                 workdir=cfg.repo_dir,
-                stdin_text=issue_text,
+                stdin_text=stdin_text,
             )
             stdout = proc.stdout
             if proc.returncode != 0:
@@ -505,7 +535,11 @@ def run_task(task: Task, cfg: RunConfig) -> dict[str, object]:
             status = "timeout"
             error = f"agent exceeded {cfg.timeout}s timeout"
 
-        usage = parse_usage(cfg.cli, stdout.splitlines())
+        usage = parse_usage(
+            cfg.cli,
+            stdout.splitlines(),
+            model=cfg.model if cfg.cli == "opencode" else None,
+        )
         record["usage"] = usage.as_dict()
         record["cost_usd"] = cost_usd(usage)
         record["turns"] = usage.turns
@@ -666,7 +700,7 @@ def _grade(out_dir: Path, args: argparse.Namespace) -> None:
                 {
                     "instance_id": instance_id,
                     "model_patch": patch,
-                    "model_name_or_path": cli,
+                    "model_name_or_path": cli if cli != "opencode" else DEFAULT_MODEL,
                 }
             )
         path = out_dir / f"predictions.{arm}.s{seed}.jsonl"
@@ -791,6 +825,7 @@ def _campaign(args: argparse.Namespace, tasks: Sequence[Task]) -> int:
         src_container=DEFAULT_SRC_MOUNT,
         timeout=max(60, args.timeout),
         dataset=args.dataset,
+        model=args.model or DEFAULT_MODEL,
     )
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     state = State(cfg.out_dir / "state.json")
@@ -893,6 +928,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--global-timeout", type=int, default=0, help="wall-clock cap for the whole campaign (0 = off)"
     )
     parser.add_argument("--repo-dir", default=DEFAULT_REPO_DIR, help="repo path inside the container")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help="agent model id (used for opencode --model and records; default: hyde-inference/hyde/glm-5.3-flash)",
+    )
     parser.add_argument(
         "--src-mount",
         default=None,

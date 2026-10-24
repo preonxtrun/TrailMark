@@ -44,10 +44,10 @@ pub const TESTS_CORE_ROWS: usize = 1;
 /// Build the deterministic atlas block BODY (no markers) within `budget` bytes.
 ///
 /// Sections, in emit order: title, RULES (full text, with a one-line compact
-/// fallback), MAP (directory roles + pagerank-ordered hot files), TESTS (runner
-/// + src→test map), PLAN (only when `issue` is given, verbose + compact
-/// variants), GLOSSARY. The byte budget is enforced by [`pack`] with the SPEC
-/// drop order; entries are never split.
+/// fallback), MAP (directory roles plus pagerank-ordered hot files), TESTS
+/// (runner and src→test map), PLAN (only when `issue` is given, verbose and
+/// compact variants), GLOSSARY. The byte budget is enforced by [`pack`] with
+/// the SPEC drop order; entries are never split.
 pub fn assemble(data: &IndexData, issue: Option<&str>, cli: &str, budget: usize) -> String {
     let pr = builder::pagerank_scores(data);
     let mut sections: Vec<Section> = Vec::new();
@@ -55,7 +55,10 @@ pub fn assemble(data: &IndexData, issue: Option<&str>, cli: &str, budget: usize)
     sections.push(Section::with_rank(
         "RULES",
         R_RULES_FULL,
-        rules::flight_rules(cli).split('\n').map(String::from).collect(),
+        rules::flight_rules(cli)
+            .split('\n')
+            .map(String::from)
+            .collect(),
     ));
     sections.push(Section::with_rank(
         "RULES",
@@ -128,18 +131,42 @@ mod tests {
             );
         }
         let refs = vec![
-            Ref { src_file: "tests/test_api.py".into(), dst_name: "handle_request".into(), dst_file: "src/api.py".into(), line: 4 },
-            Ref { src_file: "src/api.py".into(), dst_name: "parse_config".into(), dst_file: "src/util.py".into(), line: 5 },
-            Ref { src_file: "web/client.ts".into(), dst_name: "mountApp".into(), dst_file: "web/index.ts".into(), line: 6 },
+            Ref {
+                src_file: "tests/test_api.py".into(),
+                dst_name: "handle_request".into(),
+                dst_file: "src/api.py".into(),
+                line: 4,
+            },
+            Ref {
+                src_file: "src/api.py".into(),
+                dst_name: "parse_config".into(),
+                dst_file: "src/util.py".into(),
+                line: 5,
+            },
+            Ref {
+                src_file: "web/client.ts".into(),
+                dst_name: "mountApp".into(),
+                dst_file: "web/index.ts".into(),
+                line: 6,
+            },
         ];
-        IndexData { root: "/repo".into(), files, refs }
+        IndexData {
+            root: "/repo".into(),
+            files,
+            refs,
+        }
     }
 
     #[test]
     fn assemble_respects_budget_and_order() {
         let data = repo();
         for budget in [512usize, 1024, 2048, 8192] {
-            let body = assemble(&data, Some("fix the fetchJson client parsing"), "generic", budget);
+            let body = assemble(
+                &data,
+                Some("fix the fetchJson client parsing"),
+                "generic",
+                budget,
+            );
             let bytes = codegraph_core::byte_len(&body);
             assert!(bytes <= budget, "budget {budget} exceeded: {bytes}\n{body}");
             assert!(body.starts_with(TITLE), "{body}");
@@ -166,7 +193,10 @@ mod tests {
         // shrink: PLAN compacts before MAP loses rows
         let mid = assemble(&data, Some("handle_request parsing"), "generic", 900);
         let has_plan = mid.contains("PLAN");
-        let map_rows = mid.split('\n').filter(|l| l.starts_with("- src") || l.starts_with("- web")).count();
+        let map_rows = mid
+            .split('\n')
+            .filter(|l| l.starts_with("- src") || l.starts_with("- web"))
+            .count();
         if !has_plan {
             assert!(map_rows >= 3);
         }

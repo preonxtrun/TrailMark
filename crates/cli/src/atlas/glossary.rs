@@ -23,10 +23,10 @@ pub const MEANING_CAP: usize = 48;
 
 /// Small stopword list for code identifiers (len >= 5 noise words plus keywords).
 pub const STOPWORDS: &[&str] = &[
-    "about", "after", "again", "assert", "before", "check", "class", "default", "entry",
-    "except", "false", "field", "input", "item", "items", "kwargs", "object", "optional",
-    "output", "param", "params", "print", "raise", "result", "results", "return", "self",
-    "should", "string", "super", "value", "values", "verify", "while",
+    "about", "after", "again", "assert", "before", "check", "class", "default", "entry", "except",
+    "false", "field", "input", "item", "items", "kwargs", "object", "optional", "output", "param",
+    "params", "print", "raise", "result", "results", "return", "self", "should", "string", "super",
+    "value", "values", "verify", "while",
 ];
 
 /// Split snake/camel identifiers into lowercase sub-tokens.
@@ -59,9 +59,7 @@ fn ident_runs(text: &str) -> Vec<&str> {
         if b.is_ascii_alphabetic() || b == b'_' {
             let start = i;
             i += 1;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-            {
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;
             }
             runs.push(&text[start..i]);
@@ -91,7 +89,7 @@ fn subtoken_runs(part: &str) -> Vec<String> {
             i = j;
         } else if c.is_ascii_uppercase() {
             // alternative 1: optional uppercase followed by [a-z0-9]+
-            if chars.get(i + 1).copied().map_or(false, is_lower_digit) {
+            if chars.get(i + 1).copied().is_some_and(is_lower_digit) {
                 let mut j = i + 2;
                 while j < chars.len() && is_lower_digit(chars[j]) {
                     j += 1;
@@ -104,11 +102,20 @@ fn subtoken_runs(part: &str) -> Vec<String> {
                 while j < chars.len() && chars[j].is_ascii_uppercase() {
                     j += 1;
                 }
-                while j > i + 1 && chars.get(j).copied().map_or(false, |c| c.is_ascii_lowercase())
+                while j > i + 1
+                    && chars
+                        .get(j)
+                        .copied()
+                        .is_some_and(|c| c.is_ascii_lowercase())
                 {
                     j -= 1;
                 }
-                if j > i && !chars.get(j).copied().map_or(false, |c| c.is_ascii_lowercase()) {
+                if j > i
+                    && !chars
+                        .get(j)
+                        .copied()
+                        .is_some_and(|c| c.is_ascii_lowercase())
+                {
                     out.push(chars[i..j].iter().collect());
                     i = j;
                 } else {
@@ -214,16 +221,11 @@ mod tests {
 
     #[test]
     fn tokenize_splits_snake_and_camel() {
+        // "http" (4 chars) and "get" (3) are filtered by MIN_LEN=5; "response2"
+        // keeps its digit ([a-z0-9]+)
         assert_eq!(
             tokenize("parse_files HTTPServer getHTTPResponse2"),
-            vec![
-                "parse",
-                "files",
-                "http",
-                "server",
-                "http",
-                "response"
-            ]
+            vec!["parse", "files", "server", "response2"]
         );
         assert!(!tokenize("self value print").contains(&"value".to_string()));
         assert!(!tokenize("self value print").contains(&"print".to_string()));
@@ -241,7 +243,7 @@ mod tests {
             vec!["get", "HTTP", "Response"]
         );
         assert_eq!(subtoken_runs("ABCd"), vec!["AB", "Cd"]); // backtrack, then alt1
-        assert_eq!(subtoken_runs("AB9"), vec!["AB"]);
+        assert_eq!(subtoken_runs("AB9"), vec!["AB", "9"]); // raw runs; tokenize filters len
         assert_eq!(subtoken_runs("a1_b2"), vec!["a1", "b2"]);
         assert_eq!(subtoken_runs("ABC"), vec!["ABC"]); // end-of-string lookahead ok
     }

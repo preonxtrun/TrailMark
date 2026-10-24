@@ -27,8 +27,8 @@ const SIG_PREFIXES: [&str; 3] = ["async def ", "def ", "class "];
 
 /// Normalize a repo-relative path: posix separators, no "", ".", ".." parts.
 fn sanitize(rel_path: &str) -> String {
-    let parts: Vec<&str> = rel_path
-        .replace('\\', "/")
+    let normalized = rel_path.replace('\\', "/");
+    let parts: Vec<&str> = normalized
         .split('/')
         .filter(|p| !p.is_empty() && *p != "." && *p != "..")
         .collect();
@@ -41,7 +41,10 @@ fn sanitize(rel_path: &str) -> String {
 
 /// Repo-relative posix path of the outline file for source `rel_path`.
 pub fn outline_posix(rel_path: &str) -> String {
-    format!("{CODEGRAPH_DIR}/{OUTLINES_SUBDIR}/{}.md", sanitize(rel_path))
+    format!(
+        "{CODEGRAPH_DIR}/{OUTLINES_SUBDIR}/{}.md",
+        sanitize(rel_path)
+    )
 }
 
 /// Render the outline body for one indexed file (deterministic, \n-terminated).
@@ -50,7 +53,11 @@ pub fn outline_text(entry: &FileEntry) -> String {
     syms.sort_by(|a, b| (a.line, a.name.as_str()).cmp(&(b.line, b.name.as_str())));
     let mut lines = vec![format!("# {}", entry.path)];
     for sym in &syms {
-        let mut sig = sym.signature.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut sig = sym
+            .signature
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         for prefix in SIG_PREFIXES {
             if let Some(rest) = sig.strip_prefix(prefix) {
                 sig = rest.to_string();
@@ -58,11 +65,17 @@ pub fn outline_text(entry: &FileEntry) -> String {
             }
         }
         let indent = if sym.kind == "method" { "  " } else { "" };
-        let mut line = format!("{indent}L{}-{}: {} {}", sym.line, sym.end_line, sym.kind, sig)
-            .trim_end()
-            .to_string();
+        let mut line = format!(
+            "{indent}L{}-{}: {} {}",
+            sym.line, sym.end_line, sym.kind, sig
+        )
+        .trim_end()
+        .to_string();
         if !sym.doc.is_empty() {
-            line = format!("{line} — {}", sym.doc.split_whitespace().collect::<Vec<_>>().join(" "));
+            line = format!(
+                "{line} — {}",
+                sym.doc.split_whitespace().collect::<Vec<_>>().join(" ")
+            );
         }
         lines.push(line);
     }
@@ -82,11 +95,7 @@ fn current_text(path: &Path) -> Option<String> {
 ///
 /// Paths missing from the index are skipped. Unchanged outlines are not
 /// rewritten (no-op for mtime and content); they are still reported as present.
-pub fn generate_for(
-    data: &IndexData,
-    paths: &[String],
-    out_dir: &Path,
-) -> io::Result<Vec<String>> {
+pub fn generate_for(data: &IndexData, paths: &[String], out_dir: &Path) -> io::Result<Vec<String>> {
     let mut written: Vec<String> = Vec::new();
     let mut unique: Vec<&String> = paths.iter().collect();
     unique.sort();
@@ -193,7 +202,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let mut files = BTreeMap::new();
         files.insert("app/thing.py".to_string(), entry("app/thing.py"));
-        let data = IndexData { root: "/r".into(), files, refs: vec![] };
+        let data = IndexData {
+            root: "/r".into(),
+            files,
+            refs: vec![],
+        };
         let paths = vec!["app/thing.py".to_string(), "nope.py".to_string()];
         let written = generate_for(&data, &paths, &out).unwrap();
         assert_eq!(written, vec!["app/thing.py.md"]);

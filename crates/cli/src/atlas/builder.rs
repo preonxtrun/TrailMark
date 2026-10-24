@@ -174,11 +174,7 @@ fn docstring_line(path: &Path) -> String {
         line.push(chars[j]);
         j += 1;
     }
-    let line = line
-        .trim()
-        .trim_matches(['"', '\''])
-        .trim()
-        .to_string();
+    let line = line.trim().trim_matches(['"', '\'']).trim().to_string();
     if line.chars().count() >= 3 {
         line
     } else {
@@ -239,11 +235,7 @@ pub fn sym_label(sym: &Symbol) -> String {
 /// no line anchor, so they only fill up to MIN_ROWS when symbol-bearing files
 /// fall short of the floor.
 pub fn hot_files(data: &IndexData, pr: Option<&HashMap<String, f64>>) -> Vec<String> {
-    let src: Vec<&String> = data
-        .files
-        .keys()
-        .filter(|p| !is_test_file(p))
-        .collect();
+    let src: Vec<&String> = data.files.keys().filter(|p| !is_test_file(p)).collect();
     let with_syms: Vec<&String> = src
         .iter()
         .copied()
@@ -272,7 +264,11 @@ pub fn hot_files(data: &IndexData, pr: Option<&HashMap<String, f64>>) -> Vec<Str
             v
         }
     };
-    let mut hot: Vec<String> = ordered.iter().take(MAX_ROWS).map(|p| (*p).clone()).collect();
+    let mut hot: Vec<String> = ordered
+        .iter()
+        .take(MAX_ROWS)
+        .map(|p| (*p).clone())
+        .collect();
     if hot.len() < MIN_ROWS {
         hot.extend(
             fillers
@@ -320,7 +316,7 @@ pub fn build_map(data: &IndexData, pr: Option<&HashMap<String, f64>>) -> Vec<Str
         if !desc.is_empty() {
             row = format!("{row} — {desc}");
         }
-        rows.push(cap_row(&row));
+        rows.push(cap_row(&row, ROW_CAP));
     }
 
     // Tiny repos: top up to MIN_ROWS with role-only rows for the remaining dirs,
@@ -376,7 +372,7 @@ pub fn build_plan(
     pr: Option<&HashMap<String, f64>>,
 ) -> (Vec<String>, Vec<String>) {
     let _ = pr; // accepted for signature symmetry with the other builders
-    let terms = issue_terms(issue);
+    let terms = issue_terms(issue, 16);
     let mut matched_files: HashMap<String, Vec<String>> = HashMap::new();
     let mut file_scores: HashMap<String, usize> = HashMap::new();
     for (path, entry) in &data.files {
@@ -414,11 +410,7 @@ pub fn build_plan(
     let mut leads: Vec<String> = Vec::new();
     let mut top_ref = String::new();
     let mut ranked: Vec<&String> = file_scores.keys().collect();
-    ranked.sort_by(|a, b| {
-        file_scores[*b]
-            .cmp(&file_scores[*a])
-            .then(a.cmp(b))
-    });
+    ranked.sort_by(|a, b| file_scores[*b].cmp(&file_scores[*a]).then(a.cmp(b)));
     for (rank, path) in ranked.iter().enumerate() {
         if leads.len() >= 5 {
             break;
@@ -432,10 +424,18 @@ pub fn build_plan(
         let joined = if matched.is_empty() {
             "path match".to_string()
         } else {
-            matched.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            matched
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         let why = truncate(&joined, DESC_CAP * 2);
-        leads.push(format!("{}. {path}:{line_range} — matches: {why}", rank + 1));
+        leads.push(format!(
+            "{}. {path}:{line_range} — matches: {why}",
+            rank + 1
+        ));
         if top_ref.is_empty() {
             top_ref = (*path).clone();
         }
@@ -451,14 +451,9 @@ pub fn build_plan(
         );
     }
 
-    let verbose = vec![
-        "LEADS (verify, don't trust):".to_string(),
-        leads.clone(),
-        format!("OUTLINES: .codegraph/outlines/{top_ref}.md"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let mut verbose = vec!["LEADS (verify, don't trust):".to_string()];
+    verbose.extend(leads.iter().cloned());
+    verbose.push(format!("OUTLINES: .codegraph/outlines/{top_ref}.md"));
     let compact = vec![leads[0].clone()];
     (verbose, compact)
 }
@@ -515,36 +510,308 @@ fn issue_runs(issue: &str) -> Vec<String> {
 
 /// Prose stopwords for issue-term extraction (copied from `atlas/builder.py`).
 pub const PROSE_STOP: &[&str] = &[
-    "about", "after", "also", "any", "been", "before", "being", "both", "could", "does", "done",
-    "during", "each", "else", "every", "from", "have", "here", "into", "just", "like", "more",
-    "most", "must", "need", "needs", "only", "other", "over", "should", "since", "some", "such",
-    "sure", "than", "that", "their", "them", "then", "there", "these", "they", "this", "those",
-    "under", "want", "well", "were", "what", "when", "where", "which", "while", "will", "with",
-    "without", "would", "your", "yours", "able", "across", "actually", "allow", "allows",
-    "always", "another", "anything", "apply", "based", "because", "become", "begin", "below",
-    "between", "bring", "build", "built", "call", "come", "common", "crashes", "create",
-    "created", "disable", "down", "due", "either", "error", "errors", "ensure", "ensuring",
-    "even", "ever", "every", "expected", "fails", "failure", "failed", "false", "file", "files",
-    "find", "fine", "first", "fix", "fixed", "following", "force", "form", "found", "further",
-    "get", "give", "given", "goes", "gone", "good", "got", "great", "happen", "happens", "hard",
-    "have", "having", "help", "here", "hold", "hook", "hope", "however", "idea", "implement",
-    "initial", "inside", "instead", "issue", "issues", "itself", "keep", "kept", "kind", "know",
-    "known", "last", "late", "later", "least", "left", "less", "let", "like", "likely", "line",
-    "lines", "little", "long", "look", "lot", "made", "main", "make", "makes", "many", "maybe",
-    "mean", "means", "might", "mine", "more", "move", "much", "must", "name", "near", "need",
-    "never", "next", "none", "note", "nothing", "now", "null", "occur", "once", "ones", "open",
-    "order", "other", "others", "out", "output", "over", "own", "pass", "passed", "passing",
-    "patch", "place", "please", "point", "possible", "present", "previously", "prior",
-    "probably", "problem", "provide", "put", "reads", "real", "really", "reason", "related",
-    "remain", "remove", "repeat", "replaced", "report", "required", "result", "right", "runs",
-    "running", "same", "scenario", "seen", "seems", "set", "several", "shown", "side", "similar",
-    "since", "small", "some", "something", "sometimes", "soon", "specific", "started", "still",
-    "stop", "take", "taken", "test", "tests", "than", "thats", "thing", "things", "think",
-    "third", "three", "through", "time", "times", "today", "together", "too", "took", "toward",
-    "true", "try", "trying", "turn", "twice", "type", "typical", "under", "until", "upon",
-    "usage", "use", "used", "uses", "using", "usually", "various", "very", "wait", "want",
-    "wants", "was", "way", "ways", "well", "went", "what", "whats", "when", "where", "whether",
-    "which", "while", "whole", "whose", "work", "works", "would", "yet", "you", "your",
+    "about",
+    "after",
+    "also",
+    "any",
+    "been",
+    "before",
+    "being",
+    "both",
+    "could",
+    "does",
+    "done",
+    "during",
+    "each",
+    "else",
+    "every",
+    "from",
+    "have",
+    "here",
+    "into",
+    "just",
+    "like",
+    "more",
+    "most",
+    "must",
+    "need",
+    "needs",
+    "only",
+    "other",
+    "over",
+    "should",
+    "since",
+    "some",
+    "such",
+    "sure",
+    "than",
+    "that",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "under",
+    "want",
+    "well",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "will",
+    "with",
+    "without",
+    "would",
+    "your",
+    "yours",
+    "able",
+    "across",
+    "actually",
+    "allow",
+    "allows",
+    "always",
+    "another",
+    "anything",
+    "apply",
+    "based",
+    "because",
+    "become",
+    "begin",
+    "below",
+    "between",
+    "bring",
+    "build",
+    "built",
+    "call",
+    "come",
+    "common",
+    "crashes",
+    "create",
+    "created",
+    "disable",
+    "down",
+    "due",
+    "either",
+    "error",
+    "errors",
+    "ensure",
+    "ensuring",
+    "even",
+    "ever",
+    "every",
+    "expected",
+    "fails",
+    "failure",
+    "failed",
+    "false",
+    "file",
+    "files",
+    "find",
+    "fine",
+    "first",
+    "fix",
+    "fixed",
+    "following",
+    "force",
+    "form",
+    "found",
+    "further",
+    "get",
+    "give",
+    "given",
+    "goes",
+    "gone",
+    "good",
+    "got",
+    "great",
+    "happen",
+    "happens",
+    "hard",
+    "have",
+    "having",
+    "help",
+    "here",
+    "hold",
+    "hook",
+    "hope",
+    "however",
+    "idea",
+    "implement",
+    "initial",
+    "inside",
+    "instead",
+    "issue",
+    "issues",
+    "itself",
+    "keep",
+    "kept",
+    "kind",
+    "know",
+    "known",
+    "last",
+    "late",
+    "later",
+    "least",
+    "left",
+    "less",
+    "let",
+    "like",
+    "likely",
+    "line",
+    "lines",
+    "little",
+    "long",
+    "look",
+    "lot",
+    "made",
+    "main",
+    "make",
+    "makes",
+    "many",
+    "maybe",
+    "mean",
+    "means",
+    "might",
+    "mine",
+    "more",
+    "move",
+    "much",
+    "must",
+    "name",
+    "near",
+    "need",
+    "never",
+    "next",
+    "none",
+    "note",
+    "nothing",
+    "now",
+    "null",
+    "occur",
+    "once",
+    "ones",
+    "open",
+    "order",
+    "other",
+    "others",
+    "out",
+    "output",
+    "over",
+    "own",
+    "pass",
+    "passed",
+    "passing",
+    "patch",
+    "place",
+    "please",
+    "point",
+    "possible",
+    "present",
+    "previously",
+    "prior",
+    "probably",
+    "problem",
+    "provide",
+    "put",
+    "reads",
+    "real",
+    "really",
+    "reason",
+    "related",
+    "remain",
+    "remove",
+    "repeat",
+    "replaced",
+    "report",
+    "required",
+    "result",
+    "right",
+    "runs",
+    "running",
+    "same",
+    "scenario",
+    "seen",
+    "seems",
+    "set",
+    "several",
+    "shown",
+    "side",
+    "similar",
+    "since",
+    "small",
+    "some",
+    "something",
+    "sometimes",
+    "soon",
+    "specific",
+    "started",
+    "still",
+    "stop",
+    "take",
+    "taken",
+    "test",
+    "tests",
+    "than",
+    "thats",
+    "thing",
+    "things",
+    "think",
+    "third",
+    "three",
+    "through",
+    "time",
+    "times",
+    "today",
+    "together",
+    "too",
+    "took",
+    "toward",
+    "true",
+    "try",
+    "trying",
+    "turn",
+    "twice",
+    "type",
+    "typical",
+    "under",
+    "until",
+    "upon",
+    "usage",
+    "use",
+    "used",
+    "uses",
+    "using",
+    "usually",
+    "various",
+    "very",
+    "wait",
+    "want",
+    "wants",
+    "was",
+    "way",
+    "ways",
+    "well",
+    "went",
+    "what",
+    "whats",
+    "when",
+    "where",
+    "whether",
+    "which",
+    "while",
+    "whole",
+    "whose",
+    "work",
+    "works",
+    "would",
+    "yet",
+    "you",
+    "your",
 ];
 
 /// Row description: doc line, else collapsed signature (byte-capped).
@@ -555,7 +822,10 @@ fn desc_of(sym: Option<&Symbol>) -> String {
     let text = if !sym.doc.is_empty() {
         sym.doc.split_whitespace().collect::<Vec<_>>().join(" ")
     } else {
-        sym.signature.split_whitespace().collect::<Vec<_>>().join(" ")
+        sym.signature
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     };
     if text.is_empty() {
         String::new()
@@ -614,11 +884,11 @@ mod tests {
                     size: 10,
                     symbols: vec![Symbol {
                         file: f.to_string(),
-                        name: format!("fn{i}"),
+                        name: format!("symbol_{i}"),
                         kind: "def".into(),
                         line: 1,
                         end_line: 2,
-                        signature: format!("def fn{i}(x)"),
+                        signature: format!("def symbol_{i}(x)"),
                         doc: String::new(),
                     }],
                 },
@@ -667,19 +937,31 @@ mod tests {
     #[test]
     fn plan_leads_rank_by_score_then_path() {
         let d = data(&["app/a.py", "app/b.py"], &[(0, 1)]);
-        let (verbose, compact) = build_plan(&d, "fn0 fn1", None);
+        let (verbose, compact) = build_plan(&d, "symbol_0 symbol_1", None);
         assert!(verbose[0] == "LEADS (verify, don't trust):");
-        assert!(verbose[1].starts_with("1. app/a.py:1-2 — matches: fn0"));
+        assert!(
+            verbose[1].starts_with("1. app/a.py:1-2 — matches: symbol_0"),
+            "{verbose:?}"
+        );
         assert_eq!(compact, vec![verbose[1].clone()]);
-        assert!(verbose.last().unwrap().starts_with("OUTLINES: .codegraph/outlines/app/a.py.md"));
+        assert!(verbose
+            .last()
+            .unwrap()
+            .starts_with("OUTLINES: .codegraph/outlines/app/a.py.md"));
     }
 
     #[test]
     fn plan_no_matches_falls_back_to_hint() {
         let d = data(&["app/a.py"], &[]);
         let (verbose, compact) = build_plan(&d, "zzzz qqqq", None);
-        assert_eq!(verbose[1], "- (no lexical matches in index — start from MAP hot files)");
-        assert_eq!(compact[0], "(no lexical matches — start from MAP hot files)");
+        assert_eq!(
+            verbose[1],
+            "- (no lexical matches in index — start from MAP hot files)"
+        );
+        assert_eq!(
+            compact[0],
+            "(no lexical matches — start from MAP hot files)"
+        );
     }
 
     #[test]
@@ -687,6 +969,13 @@ mod tests {
         let d = data(&["a.py", "b.py", "c.py", "d.py"], &[]);
         let rows = build_map(&d, None);
         assert!(rows.len() >= MIN_ROWS);
-        assert!(rows[0].starts_with("./ — code; hot: a.py:1 fn0()"), "{rows:?}");
+        assert!(
+            rows[0].starts_with("- ./ — code; hot: a.py:1 symbol_0()"),
+            "{rows:?}"
+        );
+        assert!(
+            rows[0].ends_with("def symbol_0(x)"),
+            "signature used as desc: {rows:?}"
+        );
     }
 }

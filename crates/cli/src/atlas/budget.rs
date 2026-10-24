@@ -67,14 +67,14 @@ fn pick(work: &[Section], visible: &[bool]) -> Option<Choice> {
         }
         if let Some(rank) = sec.rank {
             let cand = (rank, i, 0u8);
-            if best.map_or(true, |b| cand < b) {
+            if best.is_none_or(|b| cand < b) {
                 best = Some(cand);
             }
         }
         if let Some(rank) = sec.item_rank {
             if sec.items.len() > sec.core {
                 let cand = (rank, i, 1u8);
-                if best.map_or(true, |b| cand < b) {
+                if best.is_none_or(|b| cand < b) {
                     best = Some(cand);
                 }
             }
@@ -82,7 +82,7 @@ fn pick(work: &[Section], visible: &[bool]) -> Option<Choice> {
         if let Some(rank) = sec.core_rank {
             if !sec.items.is_empty() {
                 let cand = (rank, i, 2u8);
-                if best.map_or(true, |b| cand < b) {
+                if best.is_none_or(|b| cand < b) {
                     best = Some(cand);
                 }
             }
@@ -100,7 +100,8 @@ fn render(work: &[Section]) -> (String, Vec<bool>) {
     let mut visible: Vec<bool> = Vec::with_capacity(work.len());
     let mut seen_tags: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for sec in work {
-        let vis = !sec.items.is_empty() && (sec.tag.is_empty() || !seen_tags.contains(sec.tag.as_str()));
+        let vis =
+            !sec.items.is_empty() && (sec.tag.is_empty() || !seen_tags.contains(sec.tag.as_str()));
         visible.push(vis);
         if !vis {
             continue;
@@ -158,16 +159,26 @@ mod tests {
     #[test]
     fn pack_drops_whole_sections_by_rank_first() {
         let sections = [
-            sec("A", Some(10), &["a1", "a2"]),
+            Section {
+                tag: "A".into(),
+                rank: None,
+                items: vec!["a1".into(), "a2".into()],
+                core: 0,
+                item_rank: Some(30),
+                core_rank: None,
+            },
             sec("B", Some(0), &["b1"]),
-            sec("C", None, &["c1"]),
+            Section::with_rank("C", 90, vec!["c1".to_string()]),
         ];
         // budget fits only A + C without B
         let body = pack(&sections, byte_len("A\na1\na2\nC\nc1"));
         assert_eq!(body, "A\na1\na2\nC\nc1");
-        // tighter: B (rank 0) drops first, then A's tail
+        // tighter: B (rank 0) drops first, then A's tail item (item_rank 30)
         let body = pack(&sections, byte_len("A\na1\nC\nc1"));
         assert_eq!(body, "A\na1\nC\nc1");
+        // below that: A's last item drops, then C (rank 90) drops whole
+        let tiny = pack(&sections, 3);
+        assert_eq!(tiny, "");
     }
 
     #[test]
@@ -181,7 +192,10 @@ mod tests {
         assert!(!big.contains("short"));
         // verbose dropped → compact revealed
         let small = pack(&sections, byte_len("TAIL\nx") + 2);
-        assert!(small.contains("short") || !small.contains("PLAN"), "{small}");
+        assert!(
+            small.contains("short") || !small.contains("PLAN"),
+            "{small}"
+        );
     }
 
     #[test]
@@ -194,7 +208,7 @@ mod tests {
             item_rank: Some(40),
             core_rank: Some(60),
         };
-        let rules = Section::with_rank("RULES", Some(50), vec!["rules".into()]);
+        let rules = Section::with_rank("RULES", 50, vec!["rules".into()]);
         let sections = [map, rules];
         // r3 then r2 drop (item_rank, tail first); r1 is protected until core_rank
         let tight = pack(&sections, byte_len("MAP\nr1\nRULES\nrules"));
@@ -207,9 +221,20 @@ mod tests {
     #[test]
     fn pack_never_exceeds_budget() {
         let sections = [
-            sec("", None, &["# CODEGRAPH ATLAS — auto-generated, do not edit inside markers"]),
-            Section::with_rank("GLOSSARY", 0, vec!["- term = meaning (a.py:1)"]),
-            sec("MAP", None, &["- a/b.py:1 fn() — doc"]),
+            Section::with_rank(
+                "",
+                90,
+                vec!["# CODEGRAPH ATLAS — auto-generated, do not edit inside markers".to_string()],
+            ),
+            Section::with_rank("GLOSSARY", 0, vec!["- term = meaning (a.py:1)".to_string()]),
+            Section {
+                tag: "MAP".into(),
+                rank: Some(40),
+                items: vec!["- a/b.py:1 fn() — doc".to_string()],
+                core: 0,
+                item_rank: Some(40),
+                core_rank: Some(60),
+            },
         ];
         for budget in [0usize, 16, 64, 200, 2048] {
             let body = pack(&sections, budget);

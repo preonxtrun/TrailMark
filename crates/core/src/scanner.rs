@@ -59,12 +59,57 @@ pub const SKIP_DIRS: &[&str] = &[
 fn is_binary_ext(ext: &str) -> bool {
     matches!(
         ext,
-        ".png" | ".jpg" | ".jpeg" | ".gif" | ".bmp" | ".ico" | ".webp" | ".pdf" | ".zip"
-            | ".tar" | ".gz" | ".tgz" | ".bz2" | ".xz" | ".7z" | ".rar" | ".jar" | ".woff"
-            | ".woff2" | ".ttf" | ".otf" | ".eot" | ".mp3" | ".mp4" | ".avi" | ".mov"
-            | ".wav" | ".flac" | ".ogg" | ".exe" | ".dll" | ".so" | ".dylib" | ".a" | ".o"
-            | ".obj" | ".lib" | ".pyc" | ".pyo" | ".class" | ".wasm" | ".db" | ".sqlite"
-            | ".sqlite3" | ".bin" | ".iso" | ".img" | ".deb" | ".rpm" | ".whl" | ".parquet"
+        ".png"
+            | ".jpg"
+            | ".jpeg"
+            | ".gif"
+            | ".bmp"
+            | ".ico"
+            | ".webp"
+            | ".pdf"
+            | ".zip"
+            | ".tar"
+            | ".gz"
+            | ".tgz"
+            | ".bz2"
+            | ".xz"
+            | ".7z"
+            | ".rar"
+            | ".jar"
+            | ".woff"
+            | ".woff2"
+            | ".ttf"
+            | ".otf"
+            | ".eot"
+            | ".mp3"
+            | ".mp4"
+            | ".avi"
+            | ".mov"
+            | ".wav"
+            | ".flac"
+            | ".ogg"
+            | ".exe"
+            | ".dll"
+            | ".so"
+            | ".dylib"
+            | ".a"
+            | ".o"
+            | ".obj"
+            | ".lib"
+            | ".pyc"
+            | ".pyo"
+            | ".class"
+            | ".wasm"
+            | ".db"
+            | ".sqlite"
+            | ".sqlite3"
+            | ".bin"
+            | ".iso"
+            | ".img"
+            | ".deb"
+            | ".rpm"
+            | ".whl"
+            | ".parquet"
     )
 }
 
@@ -191,7 +236,7 @@ pub fn scan(root: &str, langs: &[String]) -> Vec<ScannedFile> {
             if e.depth() == 0 {
                 return true;
             }
-            if e.file_type().map_or(false, |t| t.is_dir()) {
+            if e.file_type().is_some_and(|t| t.is_dir()) {
                 !skip_dir(&e.file_name().to_string_lossy())
             } else {
                 true
@@ -209,7 +254,7 @@ pub fn scan(root: &str, langs: &[String]) -> Vec<ScannedFile> {
         }
         // only plain files (symlinks / special files are skipped, like os.stat
         // with follow_symlinks=False in the Python reference)
-        if !entry.file_type().map_or(false, |t| t.is_file()) {
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
         let path = entry.path().to_path_buf();
@@ -295,7 +340,10 @@ mod tests {
         assert_eq!(lang_for(".md", &all).unwrap(), "txt");
         assert_eq!(lang_for(".md", &HashSet::from(["py".to_string()])), None);
         assert_eq!(lang_for(".cpp", &all), None); // c not requested
-        assert_eq!(lang_for(".h", &HashSet::from(["c".to_string()])).unwrap(), "c");
+        assert_eq!(
+            lang_for(".h", &HashSet::from(["c".to_string()])).unwrap(),
+            "c"
+        );
     }
 
     #[test]

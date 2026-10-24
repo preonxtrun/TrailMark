@@ -293,7 +293,9 @@ fn sig_ts(node: Node, src: &[u8]) -> String {
         return clip(&format!("{name}{}", params_or_empty(node, src)), SIG_LIMIT);
     }
     if kind == "lexical_declaration" || kind == "variable_declaration" {
-        let decl = children_of(node).into_iter().find(|c| c.kind() == "variable_declarator");
+        let decl = children_of(node)
+            .into_iter()
+            .find(|c| c.kind() == "variable_declarator");
         if let Some(decl) = decl {
             if let Some(val) = decl.child_by_field_name("value") {
                 if let Some(params) = val.child_by_field_name("parameters") {
@@ -307,7 +309,11 @@ fn sig_ts(node: Node, src: &[u8]) -> String {
         .child_by_field_name("name")
         .map(|n| txt_lossy(n, src))
         .unwrap_or_default();
-    let prefix = if has_child(node, "async") { "async " } else { "" };
+    let prefix = if has_child(node, "async") {
+        "async "
+    } else {
+        ""
+    };
     clip(
         &format!("{prefix}function {name}{}", params_or_empty(node, src)),
         SIG_LIMIT,
@@ -366,7 +372,10 @@ fn doc_py(node: Node, src: &[u8]) -> String {
     if first.kind() != "string" {
         return String::new();
     }
-    let content = match children_of(first).into_iter().find(|c| c.kind() == "string_content") {
+    let content = match children_of(first)
+        .into_iter()
+        .find(|c| c.kind() == "string_content")
+    {
         Some(c) => c,
         None => return String::new(),
     };
@@ -548,7 +557,12 @@ fn py_module_prefix(root: &Path, relpath: &str, level: usize, module: &str) -> S
     String::new()
 }
 
-fn py_import_refs(root: &Path, relpath: &str, node: Node, src: &[u8]) -> Vec<(String, String, u32)> {
+fn py_import_refs(
+    root: &Path,
+    relpath: &str,
+    node: Node,
+    src: &[u8],
+) -> Vec<(String, String, u32)> {
     let line = node.start_position().row as u32 + 1;
     if node.kind() == "import_statement" {
         let mut refs = Vec::new();
@@ -578,12 +592,16 @@ fn py_import_refs(root: &Path, relpath: &str, node: Node, src: &[u8]) -> Vec<(St
     let mut module = String::new();
     if let Some(mod_node) = node.child_by_field_name("module_name") {
         if mod_node.kind() == "relative_import" {
-            let prefix_node = children_of(mod_node).into_iter().find(|c| c.kind() == "import_prefix");
+            let prefix_node = children_of(mod_node)
+                .into_iter()
+                .find(|c| c.kind() == "import_prefix");
             let dots = prefix_node
                 .map(|n| txt_lossy(n, src))
                 .unwrap_or_else(|| ".".into());
             level = dots.matches('.').count().max(1);
-            let dn = children_of(mod_node).into_iter().find(|c| c.kind() == "dotted_name");
+            let dn = children_of(mod_node)
+                .into_iter()
+                .find(|c| c.kind() == "dotted_name");
             module = dn.map(|n| txt_lossy(n, src)).unwrap_or_default();
         } else {
             module = txt_lossy(mod_node, src);
@@ -723,7 +741,9 @@ fn ts_clause_names(node: Node, src: &[u8]) -> Vec<String> {
                 }
             }
             "namespace_import" => {
-                let alias = children_of(child).into_iter().find(|c| c.kind() == "identifier");
+                let alias = children_of(child)
+                    .into_iter()
+                    .find(|c| c.kind() == "identifier");
                 names.push(alias.map(|n| txt_lossy(n, src)).unwrap_or_default());
             }
             _ => {}
@@ -732,7 +752,12 @@ fn ts_clause_names(node: Node, src: &[u8]) -> Vec<String> {
     names
 }
 
-fn ts_import_refs(root: &Path, relpath: &str, node: Node, src: &[u8]) -> Vec<(String, String, u32)> {
+fn ts_import_refs(
+    root: &Path,
+    relpath: &str,
+    node: Node,
+    src: &[u8],
+) -> Vec<(String, String, u32)> {
     let src_node = match node.child_by_field_name("source") {
         Some(n) if n.kind() == "string" => n,
         _ => return vec![],
@@ -799,11 +824,7 @@ fn rs_flatten_use(text: &str) -> Vec<String> {
 
 /// Resolve a rust `use` path against crate/self/super conventions.
 fn rs_resolve(root: &Path, relpath: &str, base_segs: &[&str], leaf: &str) -> String {
-    let crate_root = if root.join("src").is_dir() {
-        "src"
-    } else {
-        ""
-    };
+    let crate_root = if root.join("src").is_dir() { "src" } else { "" };
     let rel_dir = parent_dir(relpath);
     if base_segs.is_empty() {
         return String::new();
@@ -1099,7 +1120,7 @@ fn regex_symbols(src: &[u8], lang: &str, relpath: &str) -> Vec<Symbol> {
                 end_line = fallback_end_line(&lines, line - 1);
             }
             let sig = clip(
-                &collapse(raw).trim_end_matches([' ', '{', ';', ':']),
+                collapse(raw).trim_end_matches([' ', '{', ';', ':']),
                 SIG_LIMIT,
             );
             symbols.push(Symbol {
@@ -1140,7 +1161,9 @@ fn extract_symbols(
         if name_node.is_none()
             && (node.kind() == "lexical_declaration" || node.kind() == "variable_declaration")
         {
-            let decl = children_of(node).into_iter().find(|c| c.kind() == "variable_declarator");
+            let decl = children_of(node)
+                .into_iter()
+                .find(|c| c.kind() == "variable_declarator");
             name_node = decl.and_then(|d| d.child_by_field_name("name"));
         }
         let Some(name_node) = name_node else { continue };
@@ -1275,10 +1298,8 @@ fn parse_one(root: &Path, file: &ScannedFile) -> (String, Vec<Symbol>, Vec<Ref>)
         }
     }
     if !parsed_ok || has_error {
-        let known: HashSet<(String, u32)> = symbols
-            .iter()
-            .map(|s| (s.name.clone(), s.line))
-            .collect();
+        let known: HashSet<(String, u32)> =
+            symbols.iter().map(|s| (s.name.clone(), s.line)).collect();
         let spans: Vec<(u32, u32)> = symbols.iter().map(|s| (s.line, s.end_line)).collect();
         for sym in regex_symbols(&src, lang, relpath) {
             if known.contains(&(sym.name.clone(), sym.line)) {
@@ -1307,16 +1328,15 @@ pub fn parse_files(
         return HashMap::new();
     }
     let root_path = std::path::PathBuf::from(root);
-    let parse_chunk =
-        |chunk: &[ScannedFile]| -> Vec<(String, String, Vec<Symbol>, Vec<Ref>)> {
-            chunk
-                .iter()
-                .map(|f| {
-                    let (lang, symbols, refs) = parse_one(&root_path, f);
-                    (f.rel.clone(), lang, symbols, refs)
-                })
-                .collect()
-        };
+    let parse_chunk = |chunk: &[ScannedFile]| -> Vec<(String, String, Vec<Symbol>, Vec<Ref>)> {
+        chunk
+            .iter()
+            .map(|f| {
+                let (lang, symbols, refs) = parse_one(&root_path, f);
+                (f.rel.clone(), lang, symbols, refs)
+            })
+            .collect()
+    };
 
     let mut results: HashMap<String, (String, Vec<Symbol>, Vec<Ref>)> = HashMap::new();
     if files.len() <= INPROC_THRESHOLD {
@@ -1330,12 +1350,15 @@ pub fn parse_files(
 
     // Parallel path: explicit worker count when requested, rayon default otherwise.
     let chunks: Vec<&[ScannedFile]> = files.chunks(CHUNK_SIZE).collect();
-    let parsed: Vec<Vec<(String, String, Vec<Symbol>, Vec<Ref>)>> =
-        if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(workers.clamp(1, 32)).build() {
-            pool.install(|| chunks.par_iter().map(|c| parse_chunk(c)).collect())
-        } else {
-            chunks.iter().map(|c| parse_chunk(c)).collect()
-        };
+    type ChunkResult = Vec<(String, String, Vec<Symbol>, Vec<Ref>)>;
+    let parsed: Vec<ChunkResult> = if let Ok(pool) = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers.clamp(1, 32))
+        .build()
+    {
+        pool.install(|| chunks.par_iter().map(|c| parse_chunk(c)).collect())
+    } else {
+        chunks.iter().map(|c| parse_chunk(c)).collect()
+    };
     for chunk_result in parsed {
         for (rel, lang, symbols, refs) in chunk_result {
             results.insert(rel, (lang, symbols, refs));
@@ -1366,7 +1389,7 @@ fn pick_candidate(candidates: &[String], src_file: &str, src_dir: &str) -> Strin
             continue;
         }
         let key = (if parent_dir(cand) == src_dir { 0u8 } else { 1 }, cand);
-        if best_key.map_or(true, |bk| key < bk) {
+        if best_key.is_none_or(|bk| key < bk) {
             best = cand.to_string();
             best_key = Some(key);
         }

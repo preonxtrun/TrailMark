@@ -13,7 +13,7 @@ pub fn byte_len(text: &str) -> usize {
 ///
 /// Mirrors `util.tokens.estimate_tokens`: `max(1, (len + 3) // 4)` in characters.
 pub fn estimate_tokens(text: &str) -> usize {
-    ((text.chars().count() + 3) / 4).max(1)
+    text.chars().count().div_ceil(4).max(1)
 }
 
 /// Shorten `text` to at most `max_bytes` UTF-8 bytes, ellipsizing when cut.

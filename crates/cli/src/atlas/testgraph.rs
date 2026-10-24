@@ -33,12 +33,8 @@ pub fn is_test_file(path: &str) -> bool {
     }
     let name = parts[parts.len() - 1];
     match name.rsplit_once('.') {
-        Some((_stem, ext)) if ext == "py" => {
-            name.starts_with("test_") || name.ends_with("_test.py")
-        }
-        Some((_stem, ext))
-            if matches!(ext, "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx") =>
-        {
+        Some((_stem, "py")) => name.starts_with("test_") || name.ends_with("_test.py"),
+        Some((_stem, "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx")) => {
             name.contains(".test.") || name.contains(".spec.")
         }
         _ => false,
@@ -66,18 +62,19 @@ pub fn detect_runner(root: &str) -> Option<String> {
         return Some(PYTEST_RUNNER.to_string());
     }
     if read_head(base, "pyproject.toml", 65536)
-        .map_or(false, |t| t.contains("[tool.pytest.ini_options]"))
+        .is_some_and(|t| t.contains("[tool.pytest.ini_options]"))
     {
         return Some(PYTEST_RUNNER.to_string());
     }
-    if read_head(base, "setup.cfg", 65536).map_or(false, |t| t.contains("[tool:pytest]")) {
+    if read_head(base, "setup.cfg", 65536).is_some_and(|t| t.contains("[tool:pytest]")) {
         return Some(PYTEST_RUNNER.to_string());
     }
-    if read_head(base, "tox.ini", 65536).map_or(false, |t| t.contains("[pytest]")) {
+    if read_head(base, "tox.ini", 65536).is_some_and(|t| t.contains("[pytest]")) {
         return Some(PYTEST_RUNNER.to_string());
     }
 
-    let makefile = read_head(base, "Makefile", 65536).or_else(|| read_head(base, "makefile", 65536));
+    let makefile =
+        read_head(base, "Makefile", 65536).or_else(|| read_head(base, "makefile", 65536));
     if let Some(text) = makefile {
         if let Some(recipe) = makefile_test_recipe(&text) {
             return Some(truncate(&recipe, RUNNER_CAP));
@@ -91,7 +88,7 @@ pub fn detect_runner(root: &str) -> Option<String> {
                 if scripts
                     .get("test")
                     .and_then(|t| t.as_str())
-                    .map_or(false, |t| !t.trim().is_empty())
+                    .is_some_and(|t| !t.trim().is_empty())
                 {
                     return Some("npm test".to_string());
                 }
@@ -249,20 +246,32 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(detect_runner(dir.to_str().unwrap()), None);
         std::fs::write(dir.join("pytest.ini"), "[pytest]\n").unwrap();
-        assert_eq!(detect_runner(dir.to_str().unwrap()).as_deref(), Some(PYTEST_RUNNER));
+        assert_eq!(
+            detect_runner(dir.to_str().unwrap()).as_deref(),
+            Some(PYTEST_RUNNER)
+        );
         let _ = std::fs::remove_file(dir.join("pytest.ini"));
         std::fs::write(dir.join("Cargo.toml"), "[package]\n").unwrap();
-        assert_eq!(detect_runner(dir.to_str().unwrap()).as_deref(), Some("cargo test"));
+        assert_eq!(
+            detect_runner(dir.to_str().unwrap()).as_deref(),
+            Some("cargo test")
+        );
         let _ = std::fs::remove_file(dir.join("Cargo.toml"));
         std::fs::write(
             dir.join("package.json"),
             r#"{"scripts": {"test": "jest --ci"}}"#,
         )
         .unwrap();
-        assert_eq!(detect_runner(dir.to_str().unwrap()).as_deref(), Some("npm test"));
+        assert_eq!(
+            detect_runner(dir.to_str().unwrap()).as_deref(),
+            Some("npm test")
+        );
         let _ = std::fs::remove_file(dir.join("package.json"));
         std::fs::write(dir.join("Makefile"), "test:\n\tpytest -q\n").unwrap();
-        assert_eq!(detect_runner(dir.to_str().unwrap()).as_deref(), Some("pytest -q"));
+        assert_eq!(
+            detect_runner(dir.to_str().unwrap()).as_deref(),
+            Some("pytest -q")
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -286,30 +295,64 @@ mod tests {
 
     #[test]
     fn src_test_pairs_rank_by_pr_then_weight() {
-        let mut files = HashMap::new();
+        let mut files = std::collections::BTreeMap::new();
         files.insert("src/a.py".to_string(), entry("src/a.py", "py"));
-        files.insert("tests/test_a.py".to_string(), entry("tests/test_a.py", "py"));
+        files.insert(
+            "tests/test_a.py".to_string(),
+            entry("tests/test_a.py", "py"),
+        );
         files.insert("src/b.py".to_string(), entry("src/b.py", "py"));
-        files.insert("tests/test_b.py".to_string(), entry("tests/test_b.py", "py"));
+        files.insert(
+            "tests/test_b.py".to_string(),
+            entry("tests/test_b.py", "py"),
+        );
         let refs = vec![
-            Ref { src_file: "tests/test_a.py".into(), dst_name: "a".into(), dst_file: "src/a.py".into(), line: 1 },
-            Ref { src_file: "tests/test_a.py".into(), dst_name: "a".into(), dst_file: "src/a.py".into(), line: 2 },
-            Ref { src_file: "tests/test_b.py".into(), dst_name: "b".into(), dst_file: "src/b.py".into(), line: 1 },
+            Ref {
+                src_file: "tests/test_a.py".into(),
+                dst_name: "a".into(),
+                dst_file: "src/a.py".into(),
+                line: 1,
+            },
+            Ref {
+                src_file: "tests/test_a.py".into(),
+                dst_name: "a".into(),
+                dst_file: "src/a.py".into(),
+                line: 2,
+            },
+            Ref {
+                src_file: "tests/test_b.py".into(),
+                dst_name: "b".into(),
+                dst_file: "src/b.py".into(),
+                line: 1,
+            },
         ];
-        let data = IndexData { root: "/r".into(), files, refs };
+        let data = IndexData {
+            root: "/r".into(),
+            files,
+            refs,
+        };
         let mut pr = HashMap::new();
         pr.insert("src/b.py".to_string(), 0.9); // b wins despite lower weight
         let pairs = src_test_pairs(&data, Some(&pr), 5);
-        assert_eq!(pairs[0], ("src/b.py".to_string(), "tests/test_b.py".to_string()));
+        assert_eq!(
+            pairs[0],
+            ("src/b.py".to_string(), "tests/test_b.py".to_string())
+        );
         let pairs = src_test_pairs(&data, None, 5);
-        assert_eq!(pairs[0], ("src/a.py".to_string(), "tests/test_a.py".to_string()));
+        assert_eq!(
+            pairs[0],
+            ("src/a.py".to_string(), "tests/test_a.py".to_string())
+        );
     }
 
     #[test]
     fn build_tests_emits_runner_and_pairs() {
-        let mut files = HashMap::new();
+        let mut files = std::collections::BTreeMap::new();
         files.insert("src/a.py".to_string(), entry("src/a.py", "py"));
-        files.insert("tests/test_a.py".to_string(), entry("tests/test_a.py", "py"));
+        files.insert(
+            "tests/test_a.py".to_string(),
+            entry("tests/test_a.py", "py"),
+        );
         let data = IndexData {
             root: "/r".into(),
             files,

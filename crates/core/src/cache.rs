@@ -225,7 +225,15 @@ impl IndexCache {
                 con.execute(
                     "INSERT INTO symbols(file, name, kind, line, end_line, signature, doc) \
                      VALUES (?,?,?,?,?,?,?)",
-                    params![s.file, s.name, s.kind, s.line, s.end_line, s.signature, s.doc],
+                    params![
+                        s.file,
+                        s.name,
+                        s.kind,
+                        s.line,
+                        s.end_line,
+                        s.signature,
+                        s.doc
+                    ],
                 )?;
             }
         }
@@ -305,11 +313,7 @@ impl IndexCache {
     /// replaced wholesale, so repeated calls stay idempotent. Refs from other
     /// files are ignored (callers pass refs grouped by their source file).
     /// Creates the database (with schema) when it does not exist yet.
-    pub fn upsert_files(
-        &self,
-        entries: &[FileEntry],
-        refs: &[Ref],
-    ) -> Result<(), CodegraphError> {
+    pub fn upsert_files(&self, entries: &[FileEntry], refs: &[Ref]) -> Result<(), CodegraphError> {
         let mut entry_list: Vec<&FileEntry> = entries.iter().collect();
         entry_list.sort_by(|a, b| a.path.cmp(&b.path));
         let path_set: std::collections::HashSet<&String> =
@@ -356,7 +360,15 @@ impl IndexCache {
                 con.execute(
                     "INSERT INTO symbols(file, name, kind, line, end_line, signature, doc) \
                      VALUES (?,?,?,?,?,?,?)",
-                    params![s.file, s.name, s.kind, s.line, s.end_line, s.signature, s.doc],
+                    params![
+                        s.file,
+                        s.name,
+                        s.kind,
+                        s.line,
+                        s.end_line,
+                        s.signature,
+                        s.doc
+                    ],
                 )?;
             }
         }
@@ -405,18 +417,15 @@ impl IndexCache {
         let con = self.read_only()?;
         let try_query = |sql: &str| -> Result<Vec<Hit>, CodegraphError> {
             let mut stmt = con.prepare(sql)?;
-            let rows = stmt.query_map(
-                params![match_expr, k as i64],
-                |row| {
-                    Ok(Hit {
-                        file: row.get(0)?,
-                        name: row.get(1)?,
-                        kind: row.get(2)?,
-                        line: (row.get::<_, i64>(3)?).max(0) as u32,
-                        score: row.get(4)?,
-                    })
-                },
-            )?;
+            let rows = stmt.query_map(params![match_expr, k as i64], |row| {
+                Ok(Hit {
+                    file: row.get(0)?,
+                    name: row.get(1)?,
+                    kind: row.get(2)?,
+                    line: (row.get::<_, i64>(3)?).max(0) as u32,
+                    score: row.get(4)?,
+                })
+            })?;
             Ok(rows.filter_map(|r| r.ok()).collect())
         };
         match try_query(
@@ -482,17 +491,17 @@ mod tests {
                 })
                 .collect(),
         };
-        let mut a = mk("app/a.py", vec![("alpha", "def", 1, 3), ("Beta", "class", 5, 9)]);
+        let mut a = mk(
+            "app/a.py",
+            vec![("alpha", "def", 1, 3), ("Beta", "class", 5, 9)],
+        );
         sort_symbols(&mut a.symbols);
         let b = mk("app/b.py", vec![("beta_fn", "def", 2, 4)]);
         IndexData {
             root: "/repo".into(),
-            files: [
-                ("app/a.py".to_string(), a),
-                ("app/b.py".to_string(), b),
-            ]
-            .into_iter()
-            .collect(),
+            files: [("app/a.py".to_string(), a), ("app/b.py".to_string(), b)]
+                .into_iter()
+                .collect(),
             refs: vec![Ref {
                 src_file: "app/b.py".into(),
                 dst_name: "alpha".into(),
@@ -560,7 +569,8 @@ mod tests {
         assert!(!loaded.files.contains_key("app/b.py"));
         assert!(!loaded.refs.iter().any(|r| r.src_file == "app/b.py"));
         // removing again / missing paths: safe no-op
-        cache.remove_files(&["app/b.py".into(), "does/not/exist.py".into()])
+        cache
+            .remove_files(&["app/b.py".into(), "does/not/exist.py".into()])
             .unwrap();
 
         let b = data.files["app/b.py"].clone();

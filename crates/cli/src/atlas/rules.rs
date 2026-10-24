@@ -45,7 +45,9 @@ fn cli_to_variant(cli: &str) -> &'static str {
 /// One-line fallback rules for tight budgets (deterministic per variant).
 fn compact_rule(variant: &str) -> &'static str {
     match variant {
-        "claude" => "Map first; batch reads; run the TESTS runner; require file:line refs from subagents.",
+        "claude" => {
+            "Map first; batch reads; run the TESTS runner; require file:line refs from subagents."
+        }
         "shell" => "Map first; one edit per change; run the TESTS runner; persist probe scripts.",
         _ => "Map first; batch reads; run the TESTS runner; stop-loss after 2 failed searches.",
     }

@@ -101,11 +101,7 @@ pub fn pagerank(
     if n == 0 {
         return HashMap::new();
     }
-    let index: HashMap<&str, usize> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, p)| (*p, i))
-        .collect();
+    let index: HashMap<&str, usize> = nodes.iter().enumerate().map(|(i, p)| (*p, i)).collect();
 
     let pvec: Vec<f64> = match personalization.filter(|p| !p.is_empty()) {
         Some(pers) => {
@@ -145,20 +141,17 @@ pub fn pagerank(
         .iter()
         .map(|(&(s, d), &w)| (index[s], index[d], w as f64))
         .collect();
-    items.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    items.sort_by_key(|a| (a.0, a.1));
 
     let src_idx: Vec<usize> = items.iter().map(|e| e.0).collect();
     let dst_idx: Vec<usize> = items.iter().map(|e| e.1).collect();
     let weights: Vec<f64> = items.iter().map(|e| e.2).collect();
     let out_weight = bincount(&src_idx, &weights, n);
-    let flow_weight: Vec<f64> = items
-        .iter()
-        .map(|e| e.2 / out_weight[e.0])
-        .collect();
+    let flow_weight: Vec<f64> = items.iter().map(|e| e.2 / out_weight[e.0]).collect();
     let dangling: Vec<bool> = out_weight.iter().map(|&w| w == 0.0).collect();
 
     let mut rank = pvec.clone();
-    for _ in 0..iters.max(0) {
+    for _ in 0..iters {
         let scaled: Vec<f64> = src_idx
             .iter()
             .zip(&flow_weight)
@@ -247,10 +240,8 @@ mod tests {
         );
         let p1 = pagerank(&d, 0.85, 30, None);
         let p2 = pagerank(&d, 0.85, 30, None);
-        let mut k1: Vec<(String, u64)> =
-            p1.iter().map(|(k, v)| (k.clone(), v.to_bits())).collect();
-        let mut k2: Vec<(String, u64)> =
-            p2.iter().map(|(k, v)| (k.clone(), v.to_bits())).collect();
+        let mut k1: Vec<(String, u64)> = p1.iter().map(|(k, v)| (k.clone(), v.to_bits())).collect();
+        let mut k2: Vec<(String, u64)> = p2.iter().map(|(k, v)| (k.clone(), v.to_bits())).collect();
         k1.sort();
         k2.sort();
         assert_eq!(k1, k2, "bit-identical across runs");

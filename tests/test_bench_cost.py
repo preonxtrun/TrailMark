@@ -105,17 +105,20 @@ def test_parse_codex_cumulative_totals_win():
 
 
 def test_parse_opencode_fixture():
-    usage = cost.parse_opencode(_lines("opencode.jsonl"))
-    assert usage.input_tokens == 4 + 6 + 3
-    assert usage.cache_read_tokens == 0 + 1523 + 2981
-    assert usage.cache_write_tokens == 1523
-    assert usage.output_tokens == 97 + 143 + 55
-    assert usage.turns == 3
-    assert usage.model == "claude-sonnet-4-5-20250929"
-    assert usage.reported_cost_usd == pytest.approx(0.0123 + 0.0091 + 0.0042)
-    price = cost.PRICES["claude-sonnet-4"]
-    assert cost.cost_usd(usage) == pytest.approx(_cost(13, 4504, 1523, 295, price))
-    assert cost.cost_usd(usage) == pytest.approx(0.01152645)
+    """Real capture from `opencode run --format json` (opencode v2.1.4, hyde model)."""
+    usage = cost.parse_opencode(
+        _lines("opencode.jsonl"), model="hyde-inference/hyde/glm-5.3-flash"
+    )
+    assert usage.input_tokens == 1538
+    assert usage.output_tokens == 22 + 79  # output + reasoning, billed as output
+    assert usage.cache_read_tokens == 3456
+    assert usage.cache_write_tokens == 0
+    assert usage.turns == 1
+    assert usage.model == "hyde-inference/hyde/glm-5.3-flash"
+    assert usage.reported_cost_usd is None  # cost field is 0 — no public pricing
+    price = cost.PRICES["glm"]  # substring match for hyde/glm-5.3-flash (placeholder)
+    assert cost.price_for("hyde-inference/hyde/glm-5.3-flash") == price
+    assert cost.cost_usd(usage) == pytest.approx(_cost(1538, 3456, 0, 101, price))
 
 
 def test_parsers_degrade_on_garbage():

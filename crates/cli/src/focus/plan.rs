@@ -30,13 +30,23 @@ fn render(leads: &[Lead], with_why: bool, count: Option<usize>) -> String {
     };
     let mut lines = vec![PLAN_HEADER.to_string(), LEADS_HEADER.to_string()];
     for (i, lead) in shown.iter().enumerate() {
-        let mut entry = format!("{}. {}:{}-{}", i + 1, lead.path, lead.start_line, lead.end_line);
+        let mut entry = format!(
+            "{}. {}:{}-{}",
+            i + 1,
+            lead.path,
+            lead.start_line,
+            lead.end_line
+        );
         if with_why && !lead.why.is_empty() {
             entry = format!("{entry} — {}", lead.why);
         }
         lines.push(entry);
     }
-    lines.extend(shown.iter().map(|lead| format!("OUTLINES: {}", outline_posix(&lead.path))));
+    lines.extend(
+        shown
+            .iter()
+            .map(|lead| format!("OUTLINES: {}", outline_posix(&lead.path))),
+    );
     lines.join("\n")
 }
 
@@ -96,17 +106,31 @@ mod tests {
 
     #[test]
     fn render_plan_drops_why_then_leads() {
-        let leads: Vec<Lead> = (0..3).map(|i| lead(&format!("src/f{i}.py"), "w".repeat(80).as_str())).collect();
+        let leads: Vec<Lead> = (0..3)
+            .map(|i| lead(&format!("src/f{i}.py"), "w".repeat(80).as_str()))
+            .collect();
         let full = render_plan(&leads, 10000);
         let compact = render_plan(&leads, byte_len(&full) - 1);
-        assert!(!compact.contains(&format!(" — {}", "w".repeat(80))), "{compact}");
+        assert!(
+            !compact.contains(&format!(" — {}", "w".repeat(80))),
+            "{compact}"
+        );
         assert!(compact.contains("3. src/f2.py:3-12"));
         let tighter = render_plan(&leads, 200);
         assert!(byte_len(&tighter) <= 200);
         assert!(tighter.starts_with("PLAN\nLEADS (verify, don't trust):"));
-        let header = render_plan(&leads, byte_len("PLAN\nLEADS (verify, don't trust):"));
-        assert_eq!(header, "PLAN\nLEADS (verify, don't trust):");
         assert_eq!(render_plan(&leads, 119), "");
+        // long paths: even one compact lead exceeds a 130-byte budget → header only
+        let long: Vec<Lead> = (0..2)
+            .map(|i| {
+                lead(
+                    &format!("src/{}", "long_dir_name/".repeat(4) + &format!("f{i}.py")),
+                    "w",
+                )
+            })
+            .collect();
+        let header = render_plan(&long, 130);
+        assert_eq!(header, "PLAN\nLEADS (verify, don't trust):");
     }
 
     #[test]
