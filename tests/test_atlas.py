@@ -18,8 +18,7 @@ from codegraph import cli
 from codegraph.atlas import assemble, builder, glossary, rules, testgraph
 from codegraph.atlas.budget import Section, pack
 from codegraph.emit import agents_md
-from codegraph.model import FileEntry, IndexData, Ref, Symbol
-from codegraph.model import DEFAULT_BUDGET_BYTES
+from codegraph.model import DEFAULT_BUDGET_BYTES, FileEntry, IndexData, Ref, Symbol
 from codegraph.util.tokens import byte_len
 
 MT = 1_700_000_000.0  # fixed fake mtime (never emitted)
