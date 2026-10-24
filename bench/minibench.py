@@ -190,7 +190,7 @@ def ensure_worktrees(repo: Path, out_dir: Path, count: int) -> list[Path]:
         if not wt.is_dir():
             proc = subprocess.run(
                 ["git", "-C", str(repo), "worktree", "add", "--detach", str(wt), "HEAD"],
-                capture_output=True, text=True, timeout=120,
+                check=False, capture_output=True, text=True, timeout=120,
             )
             if proc.returncode != 0 and not wt.is_dir():
                 raise SystemExit(f"worktree creation failed: {proc.stderr.strip()[-200:]}")
