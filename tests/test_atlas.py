@@ -217,9 +217,11 @@ def test_drop_order_monotone_across_budgets():
     bodies = {b: assemble(data, None, "generic", b) for b in (512, 1024, 2048, 4096)}
     for b, body in bodies.items():
         assert byte_len(body) <= b, b
-    # glossary present at ≥2048, gone at 1024 (dropped before any TESTS/MAP extras)
-    assert "GLOSSARY" in bodies[2048]
+    # glossary drops FIRST (rank 0): gone at 2048 (rules+map+tests outgrew 2048),
+    # still gone at 1024 — and its absence implies nothing lower-priority survived
+    assert "GLOSSARY" not in bodies[2048]
     assert "GLOSSARY" not in bodies[1024]
+    assert "PLAN" in bodies[2048] or "MAP" in bodies[2048]  # core survives
     assert 1 <= len(section_lines(bodies[1024], "TESTS")) <= 3
     # row counts never increase as the budget shrinks
     for tag, core in (("MAP", 3), ("TESTS", 1)):
