@@ -23,6 +23,7 @@ import argparse
 import json
 import logging
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -57,8 +58,24 @@ def patch_extract(repo: Path) -> str:
     return proc.stdout if proc.returncode == 0 else ""
 
 
-def arm_setup(repo: Path, arm: str, statement: str, model: str, budget: int) -> None:
-    """control → strip the block; treatment → focus (in-process, warm)."""
+def _rust_binary() -> Path:
+    """Locate the release Rust binary (Gen 1.0 treatment core)."""
+    root = Path(__file__).resolve().parents[1]
+    binary = root / "target" / "release" / "codegraph"
+    if not binary.is_file():
+        raise SystemExit(f"rust binary not found at {binary} — run: cargo build --release")
+    return binary
+
+
+def arm_setup(
+    repo: Path,
+    arm: str,
+    statement: str,
+    model: str,
+    budget: int,
+    core: str = "python",
+) -> None:
+    """control → strip the block; treatment → focus (python in-process or rust binary)."""
     from codegraph.emit.agents_md import remove_block
 
     if arm == "control":
@@ -66,6 +83,28 @@ def arm_setup(repo: Path, arm: str, statement: str, model: str, budget: int) -> 
         return
     if arm != "treatment":
         raise ValueError(f"unknown arm {arm!r}")
+
+    if core == "rust":
+        import subprocess
+
+        binary = str(_rust_binary())
+        if not (repo / ".codegraph" / "index.db").exists():
+            subprocess.run(
+                [binary, "init", "--root", str(repo), "--budget", str(budget)],
+                check=True, capture_output=True, text=True, timeout=300,
+            )
+        proc = subprocess.run(
+            [
+                binary, "focus", statement,
+                "--root", str(repo), "--budget", str(budget),
+                "--cli", "generic",
+            ],
+            check=False, capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"rust focus failed rc={proc.returncode}: {proc.stderr[-200:]}")
+        return
+
     from codegraph.cache import IndexCache
     from codegraph.focus import cli_focus
 
@@ -141,6 +180,24 @@ def run_agent(repo: Path, statement: str, model: str, timeout: int) -> tuple[str
     return stdout, rc
 
 
+def ensure_worktrees(repo: Path, out_dir: Path, count: int) -> list[Path]:
+    """One git worktree per parallel worker (detached at HEAD), reused across reruns."""
+    wt_root = out_dir / "worktrees"
+    wt_root.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(count):
+        wt = wt_root / f"wt{i}"
+        if not wt.is_dir():
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "worktree", "add", "--detach", str(wt), "HEAD"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if proc.returncode != 0 and not wt.is_dir():
+                raise SystemExit(f"worktree creation failed: {proc.stderr.strip()[-200:]}")
+        paths.append(wt)
+    return paths
+
+
 def load_tasks(tasks_file: Path, limit: int | None) -> list[dict]:
     tasks = [
         json.loads(line)
@@ -161,7 +218,14 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--budget", type=int, default=2048)
     parser.add_argument("--timeout", type=int, default=900, help="per agent run, seconds")
+    parser.add_argument(
+        "--core",
+        choices=("python", "rust"),
+        default="python",
+        help="treatment implementation: python in-process, or the release rust binary",
+    )
     parser.add_argument("--limit", type=int, default=None, help="first N tasks only")
+    parser.add_argument("--parallel", type=int, default=1, help="concurrent runs (each gets its own git worktree)")
     parser.add_argument("--out", default="runs/minibench")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
@@ -192,69 +256,92 @@ def main() -> int:
 
     logger.info("mini-bench: %d task(s) × %s × %d seed(s) → %s", len(tasks), arms, args.seeds, out_dir)
 
-    with records_path.open("a", encoding="utf-8") as fh:
-        for seed in range(args.seeds):
-            for arm in arms:
-                for task in tasks:
-                    key = (task["id"], arm, seed)
-                    if key in done:
-                        logger.info("skip (done): %s", key)
-                        continue
-                    t_start = time.perf_counter()
-                    record = {
-                        "instance_id": task["id"],
-                        "arm": arm,
-                        "seed": seed,
-                        "cli": "opencode",
-                        "status": "completed",
-                        "error": None,
-                        "usage": None,
-                        "cost_usd": None,
-                        "turns": 0,
-                        "patch_bytes": 0,
-                        "seconds": 0.0,
-                    }
-                    try:
-                        reset_repo(repo)
-                        arm_setup(repo, arm, task["statement"], args.model, args.budget)
-                        stdout, rc = run_agent(repo, task["statement"], args.model, args.timeout)
-                        streams_dir = out_dir / "streams"
-                        streams_dir.mkdir(exist_ok=True)
-                        (streams_dir / f"{task['id']}.{arm}.s{seed}.jsonl").write_text(stdout)
-                        usage = parse_usage("opencode", stdout.splitlines(), model=args.model)
-                        record["usage"] = usage.as_dict()
-                        record["turns"] = usage.turns
-                        record["cost_usd"] = None  # tokens are the cost metric
-                        if rc != 0:
-                            record["status"] = "cli_error"
-                            record["error"] = f"exit={rc}"
-                        patch = patch_extract(repo)
-                        record["patch_bytes"] = len(patch.encode("utf-8"))
-                        (out_dir / "patches").mkdir(exist_ok=True)
-                        (out_dir / "patches" / f"{task['id']}.{arm}.s{seed}.patch").write_text(patch)
-                    except subprocess.TimeoutExpired:
-                        record["status"] = "timeout"
-                    except Exception as exc:  # per-run isolation
-                        record["status"] = "error"
-                        record["error"] = repr(exc)[:300]
-                        logger.exception("run failed: %s", key)
-                    finally:
-                        record["seconds"] = round(time.perf_counter() - t_start, 1)
-                        reset_repo(repo)
-                    fh.write(json.dumps(record) + "\n")
-                    fh.flush()
-                    logger.info(
-                        "done %s arm=%s seed=%d → %s in=%d out=%d turns=%d (%.0fs)",
-                        task["id"],
-                        arm,
-                        seed,
-                        record["status"],
-                        (record["usage"] or {}).get("input_tokens", 0),
-                        (record["usage"] or {}).get("output_tokens", 0),
-                        record["turns"],
-                        record["seconds"],
-                    )
+    pending = []
+    for seed in range(args.seeds):
+        for arm in arms:
+            for task in tasks:
+                key = (task["id"], arm, seed)
+                if key in done:
+                    logger.info("skip (done): %s", key)
+                    continue
+                pending.append((key, task, arm, seed))
 
+    n_workers = max(1, min(args.parallel, len(pending) or 1))
+    worktrees = ensure_worktrees(repo, out_dir, n_workers)
+    record_lock = threading.Lock()
+
+    def run_one(wt: Path, task: dict, arm: str, seed: int, fh, lock) -> None:
+        t_start = time.perf_counter()
+        record = {
+            "instance_id": task["id"],
+            "arm": arm,
+            "seed": seed,
+            "cli": "opencode",
+            "status": "completed",
+            "error": None,
+            "usage": None,
+            "cost_usd": None,
+            "turns": 0,
+            "patch_bytes": 0,
+            "seconds": 0.0,
+        }
+        try:
+            reset_repo(wt)
+            arm_setup(wt, arm, task["statement"], args.model, args.budget, core=args.core)
+            stdout, rc = run_agent(wt, task["statement"], args.model, args.timeout)
+            streams_dir = out_dir / "streams"
+            streams_dir.mkdir(exist_ok=True)
+            (streams_dir / f"{task['id']}.{arm}.s{seed}.jsonl").write_text(stdout)
+            usage = parse_usage("opencode", stdout.splitlines(), model=args.model)
+            record["usage"] = usage.as_dict()
+            record["turns"] = usage.turns
+            record["cost_usd"] = None  # tokens are the cost metric
+            if rc != 0:
+                record["status"] = "cli_error"
+                record["error"] = f"exit={rc}"
+            patch = patch_extract(wt)
+            record["patch_bytes"] = len(patch.encode("utf-8"))
+            (out_dir / "patches").mkdir(exist_ok=True)
+            (out_dir / "patches" / f"{task['id']}.{arm}.s{seed}.patch").write_text(patch)
+        except subprocess.TimeoutExpired:
+            record["status"] = "timeout"
+        except Exception as exc:  # per-run isolation
+            record["status"] = "error"
+            record["error"] = repr(exc)[:300]
+            logger.exception("run failed: %s", (task["id"], arm, seed))
+        finally:
+            record["seconds"] = round(time.perf_counter() - t_start, 1)
+            reset_repo(wt)
+        with lock:
+            fh.write(json.dumps(record) + "\n")
+            fh.flush()
+        logger.info(
+            "done %s arm=%s seed=%d → %s in=%d out=%d turns=%d (%.0fs)",
+            task["id"],
+            arm,
+            seed,
+            record["status"],
+            (record["usage"] or {}).get("input_tokens", 0),
+            (record["usage"] or {}).get("output_tokens", 0),
+            record["turns"],
+            record["seconds"],
+        )
+
+    def worker(worker_index: int, assignment: list) -> None:
+        wt = worktrees[worker_index]
+        with records_path.open("a", encoding="utf-8") as fh:
+            for key, task, arm, seed in assignment:
+                logger.info("worker %d ← %s", worker_index, key)
+                run_one(wt, task, arm, seed, fh, record_lock)
+
+    if n_workers == 1:
+        worker(0, pending)
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        assignments = [pending[i::n_workers] for i in range(n_workers)]
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            list(pool.map(worker, range(n_workers), assignments))
     records = [
         json.loads(line)
         for line in records_path.read_text(encoding="utf-8").splitlines()
