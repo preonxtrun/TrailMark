@@ -1,0 +1,20 @@
+# codegraph profile — static environment facts + behavioral rules for the LAB section.
+# Place at .codegraph/profile.txt inside a repo. One entry per line:
+#   fact: <a durable fact the agent must not re-derive>
+#   rule: <a behavioral rule the agent must follow>
+# Facts become a LAB section in the injected block; rules are appended to flight rules.
+# This example targets a Slurm GPU cluster. Copy, edit to YOUR cluster, keep terse.
+
+fact: partitions: gpu (A100-80G, max 24h, sacct for status), cpu (max 72h)
+fact: submit jobs with: sbatch -A myaccount -p gpu --gres=gpu:1 --mem=32G job.sbatch
+fact: job template lives at scripts/job.sbatch; edit RUN CONFIG section only
+fact: logs land in /scratch/$USER/slurm/%x-%j.out; check with sacct -j <id> --format=State,Elapsed,MaxRSS
+fact: interactive dev: srun -p gpu --gres=gpu:1 --pty bash; never train on login nodes
+fact: conda env: source ~/miniconda3/bin/activate labenv; python 3.11, torch 2.7+cu126
+fact: datasets are read-only at /data/readonly; write checkpoints to /scratch/$USER/runs/<name>
+
+rule: check sacct once per job id; never poll squeue in a loop — sleep or move on
+rule: reuse and edit scripts/job.sbatch; never regenerate similar job scripts
+rule: before launching an experiment, append its name/config to EXPERIMENTS.md; after it finishes, append the result line
+rule: a job that failed twice with the same error: read the log tail first, change one thing, resubmit
+rule: estimate GPU-hours before submitting; jobs >4h need --time set explicitly

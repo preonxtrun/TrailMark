@@ -9,8 +9,10 @@ only, and no timestamps or floats are ever emitted (invariant #1).
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from ..emit import fmt
 from ..model import IndexData
 from . import budget, builder, glossary, rules, testgraph
 from .budget import Section, pack
@@ -83,6 +85,39 @@ def _plan_from_leads(leads: list[Any]) -> tuple[list[str], list[str]]:
     return verbose, compact
 
 
+#: Drop rank for user-authored environment facts (profile file): after GLOSSARY,
+#: before PLAN — facts are cheap and high-value on lab/cluster workloads.
+R_LAB = 5
+
+
+def load_profile(root: str) -> tuple[list[str], list[str]]:
+    """(facts, extra_rules) from an optional ``.codegraph/profile.txt``.
+
+    Zero-dependency line format — one entry per line::
+
+        fact: partitions: gpu(a100, 24h), cpu; submit with sbatch -A <account>
+        rule: check sacct once per job; never poll squeue in a loop
+
+    The profile carries user-authored static facts and behavioral rules for
+    workloads where an index doesn't help: greenfield projects, experiment
+    loops, Slurm/GPU clusters (the evidence-backed "developer-designed skills"
+    mechanism — arXiv 2609.30725).
+    """
+    facts: list[str] = []
+    extra_rules: list[str] = []
+    path = Path(root) / ".codegraph" / "profile.txt"
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("fact:") and len(line) > 5:
+                facts.append(line[5:].strip())
+            elif line.startswith("rule:") and len(line) > 5:
+                extra_rules.append(line[5:].strip())
+    except OSError:
+        return [], []
+    return facts[:8], extra_rules[:6]
+
+
 def assemble(
     data: IndexData,
     issue: str | None,
@@ -101,10 +136,12 @@ def assemble(
     :func:`pack` with the SPEC drop order; entries are never split.
     """
     pr = builder.pagerank_scores(data)
+    facts, extra_rules = load_profile(data.root)
     sections: list[Section] = [Section(tag="", rank=R_HEADER, items=[TITLE])]
-    sections.append(
-        Section(tag="RULES", rank=R_RULES_FULL, items=rules.flight_rules(cli).split("\n"))
-    )
+    rules_items = rules.flight_rules(cli).split("\n")
+    for extra in extra_rules:
+        rules_items.append(fmt.wrap(extra, rules.WRAP_WIDTH))
+    sections.append(Section(tag="RULES", rank=R_RULES_FULL, items=rules_items))
     sections.append(
         Section(tag="RULES", rank=R_RULES_COMPACT, items=[f"- {rules.compact_rules(cli)}"])
     )
@@ -133,6 +170,10 @@ def assemble(
             verbose, compact = builder.build_plan(data, issue, pr)
         sections.append(Section(tag="PLAN", rank=R_PLAN_VERBOSE, items=verbose))
         sections.append(Section(tag="PLAN", rank=R_PLAN_COMPACT, items=compact))
+    if facts:
+        sections.append(
+            Section(tag="LAB", rank=R_LAB, items=[f"- {fact}" for fact in facts])
+        )
     sections.append(
         Section(
             tag="GLOSSARY",

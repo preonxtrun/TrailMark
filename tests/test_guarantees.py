@@ -27,7 +27,7 @@ from codegraph.cache import IndexCache
 from codegraph.emit.agents_md import read_block, remove_block, write_block
 from codegraph.focus.outlines import generate_top
 from codegraph.index import update
-from codegraph.model import BLOCK_END, BLOCK_START, IndexData
+from codegraph.model import BLOCK_START, IndexData
 
 BODY = "# TEST ATLAS\nMAP\n- x.py:1 foo()"  # read_block strips surrounding newlines
 
