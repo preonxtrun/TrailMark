@@ -46,6 +46,7 @@ def run_baselines(root: str | Path) -> Path | None:
             proc = subprocess.run(
                 cmd,
                 shell=True,
+                check=False,
                 cwd=str(root_path),
                 capture_output=True,
                 text=True,
