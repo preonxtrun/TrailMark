@@ -1,0 +1,20 @@
+[package]
+name = "codegraph-cli"
+description = "codegraph CLI: init / focus / remove / stats / doctor / watch with the atlas + focus pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "codegraph_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codegraph"
+path = "src/main.rs"
+
+[dependencies]
+codegraph-core = { path = "../core" }
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true

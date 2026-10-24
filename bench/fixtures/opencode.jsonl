@@ -1,0 +1,6 @@
+opencode v2.1.3 — session ses_778 (ctrl-c to interrupt)
+{"type":"message.updated","info":{"id":"msg_00","role":"user","parts":[{"type":"text","text":"Fix the crash on empty node lists."}]}}
+{"type":"message.updated","info":{"id":"msg_01","role":"assistant","modelID":"claude-sonnet-4-5-20250929","tokens":{"input":4,"output":97,"cache":{"read":0,"write":1523}},"cost":0.0123}}
+{"type":"message.updated","info":{"id":"msg_02","role":"assistant","modelID":"claude-sonnet-4-5-20250929","tokens":{"input":6,"output":143,"cache":{"read":1523,"write":0}},"cost":0.0091}}
+{"type":"message.updated","info":{"id":"msg_03","role":"assistant","modelID":"claude-sonnet-4-5-20250929","tokens":{"input":3,"output":55,"cache":{"read":2981,"write":0}},"cost":0.0042}}
+[warn] provider retry 1/3 (429), backing off 2s

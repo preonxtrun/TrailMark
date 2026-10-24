@@ -1,0 +1,23 @@
+[package]
+name = "codegraph-core"
+description = "codegraph core: scanner, parser, graph, cache, emit (Rust port of the Python reference)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "codegraph_core"
+path = "src/lib.rs"
+
+[dependencies]
+tree-sitter.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-go.workspace = true
+tree-sitter-rust.workspace = true
+rusqlite.workspace = true
+rayon.workspace = true
+regex.workspace = true
+ignore.workspace = true
+thiserror.workspace = true
