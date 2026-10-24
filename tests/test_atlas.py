@@ -347,7 +347,7 @@ def test_rules_single_agnostic_variant():
         "Run the exact test target from TESTS",
         "Persist probes to one scratch file",
         "Stop-loss: after 2 failed searches",
-        "Progress-stall stop",
+        "Progress-stall",
     ):
         assert snippet in text
     assert rules.compact_rules("claude") == rules.compact_rules("shell") == rules.compact_rules("x")
@@ -513,10 +513,15 @@ def test_map_rows_byte_capped():
 # -- PLAN section (issue text) -----------------------------------------------------------
 
 
+def test_plan_survives_default_budget():
+    body = assemble(make_data(), "refresh token expiry breaks session open", "generic", 2048)
+    assert "LEADS" in body, "PLAN dropped at default budget — rules grew too fat"
+
+
 def test_plan_section_with_issue():
     data = make_data()
     body = assemble(data, "refresh token expiry breaks session open", "claude", 4096)
-    assert "PLAN" in body and "LEADS (verify, don't trust):" in body
+    assert "PLAN" in body and "LEADS (verify, don't trust; one ranged read each, then act):" in body
     assert "OUTLINES: .codegraph/outlines/src/auth/session.py.md" in body
     assert "1. src/auth/session.py:40-64 — matches:" in body
     plan_rows = section_lines(body, "PLAN")

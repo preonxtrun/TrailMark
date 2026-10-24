@@ -36,9 +36,8 @@ BASE_RULES: tuple[str, ...] = (
         " so the same code is never retrieved twice."
     ),
     (
-        "Progress-stall stop: if the same test fails twice with the same error, or two"
-        " different fixes produce no change, stop editing — state one new hypothesis in"
-        " writing, then either act on it or report the blocker."
+        "Progress-stall: same failure twice or two ineffective fixes — write one new"
+        " hypothesis, act on it, or report the blocker."
     ),
     "Stop-loss: after 2 failed searches, re-read the map — do not keep guessing.",
 )
