@@ -957,3 +957,191 @@ fn rust_focus_writes_verify_probe() {
     }
     fs::remove_dir_all(&base).ok();
 }
+
+// ---------------------------------------------------------------------------
+// baseline snapshots: profile_cmds parity + BASELINE section parity
+// ---------------------------------------------------------------------------
+
+/// The baseline fixture profile: comments and non-baseline lines are ignored,
+/// `baseline:` payloads are stripped, and the third `baseline:` line must be
+/// dropped (and never run) by the MAX_COMMANDS=2 cap.
+const BASELINE_PROFILE_TXT: &str = "\
+# baseline profile — comments and everything else are ignored
+fact: the gpu queue drains at midnight sharp
+baseline:   echo hello-baseline
+note: neither a fact nor a baseline — ignored
+baseline: expr 2 + 2
+baseline: echo should-never-run
+";
+
+/// Run the PYTHON `focus.profile_cmds.run_baselines` against `repo` and return
+/// its truthiness ("written"/"none") as reported on stdout.
+fn python_run_baselines(uv: &Path, repo: &Path) -> String {
+    let snippet = "import sys; from trailmark.focus.profile_cmds import run_baselines; \
+                   sys.stdout.write('written' if run_baselines(sys.argv[1]) else 'none')";
+    let out = Command::new(uv)
+        .args([
+            "run",
+            "python",
+            "-c",
+            snippet,
+            repo.to_str().expect("repo path"),
+        ])
+        .current_dir(workspace_root())
+        .output()
+        .expect("python run_baselines");
+    assert!(
+        out.status.success(),
+        "python run_baselines failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Baseline snapshot parity: a fixture profile with two `baseline:` commands
+/// (echo + arithmetic) must make BOTH implementations write byte-identical
+/// `.trailmark/baseline.txt`, and the assembled block containing the BASELINE
+/// section must be byte-identical too.
+#[test]
+fn parity_with_python_baseline_snapshot_and_section() {
+    let Some(uv) = uv_path() else {
+        eprintln!("parity_with_python_baseline: SKIPPED — uv not found");
+        return;
+    };
+    if !python_available(&uv) {
+        eprintln!("parity_with_python_baseline: SKIPPED — python unavailable");
+        return;
+    }
+    let base = unique_dir("baseline");
+    let repo_py = base.join("repo_py");
+    let repo_rs = base.join("repo_rs");
+    build_repo(&repo_py);
+    build_repo(&repo_rs);
+    for repo in [&repo_py, &repo_rs] {
+        let cg = repo.join(".trailmark");
+        fs::create_dir_all(&cg).expect("mkdir .trailmark");
+        fs::write(cg.join("profile.txt"), BASELINE_PROFILE_TXT).expect("write profile.txt");
+    }
+
+    // --- baseline.txt generation on both sides ------------------------------
+    assert_eq!(python_run_baselines(&uv, &repo_py), "written");
+    let py_bytes = fs::read(repo_py.join(".trailmark/baseline.txt")).expect("py baseline.txt");
+
+    assert!(
+        trailmark_cli::focus::run_baselines(repo_rs.to_str().unwrap()).is_some(),
+        "rust run_baselines must write the file"
+    );
+    let rs_bytes = fs::read(repo_rs.join(".trailmark/baseline.txt")).expect("rs baseline.txt");
+
+    assert_eq!(
+        String::from_utf8_lossy(&py_bytes),
+        String::from_utf8_lossy(&rs_bytes),
+        "baseline.txt bytes differ"
+    );
+    let text = String::from_utf8_lossy(&py_bytes).into_owned();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        "BASELINE (captured before your changes — report the delta):"
+    );
+    assert_eq!(lines[1], "$ echo hello-baseline");
+    assert_eq!(lines[2], "  hello-baseline");
+    assert_eq!(lines[3], "  exit=0");
+    assert_eq!(lines[4], "$ expr 2 + 2");
+    assert_eq!(lines[5], "  4");
+    assert_eq!(lines[6], "  exit=0");
+    assert_eq!(lines.len(), 7, "exactly the two capped commands: {text:?}");
+    assert!(
+        !text.contains("should-never-run"),
+        "commands beyond MAX_COMMANDS must never run or appear:\n{text}"
+    );
+
+    // --- assembled block parity with the BASELINE section -------------------
+    let body_py = run_dump(
+        &uv,
+        &[
+            "--root",
+            repo_py.to_str().unwrap(),
+            "--issue",
+            ISSUE,
+            "--cli",
+            CLI,
+            "--budget",
+            "4096",
+            "--baseline",
+        ],
+    );
+    let body_rs = rust_block(&repo_rs, Some(ISSUE), 4096, false);
+
+    assert_bodies_equal("baseline", &body_py, &body_rs, &base);
+    assert!(
+        body_py.contains("BASELINE (captured before your changes — report the delta):"),
+        "BASELINE section missing from the assembled body:\n{body_py}"
+    );
+    assert!(body_py.contains("$ echo hello-baseline"));
+    assert!(body_py.contains("$ expr 2 + 2"));
+    // BASELINE (rank 6) survives at 4096; verify its position after LAB
+    let lab_idx = body_py.find("\nLAB\n").expect("LAB section present");
+    let baseline_idx = body_py
+        .find("\nBASELINE\n")
+        .expect("BASELINE section present");
+    assert!(
+        lab_idx < baseline_idx,
+        "BASELINE must follow LAB:\n{body_py}"
+    );
+    fs::remove_dir_all(&base).ok();
+}
+
+/// Negative control: a profile WITHOUT `baseline:` lines must not create
+/// `.trailmark/baseline.txt` in either implementation, and the assembled body
+/// must contain no BASELINE section.
+#[test]
+fn rust_no_baseline_lines_means_no_file_and_no_section() {
+    let base = unique_dir("nobaseline");
+    let repo_rs = base.join("repo_rs");
+    build_repo(&repo_rs);
+    let cg = repo_rs.join(".trailmark");
+    fs::create_dir_all(&cg).expect("mkdir .trailmark");
+    fs::write(
+        cg.join("profile.txt"),
+        "fact: only a fact\nrule: and a rule\n",
+    )
+    .expect("write profile.txt");
+
+    let root_rs = repo_rs.to_str().unwrap();
+    assert!(
+        trailmark_cli::focus::run_baselines(root_rs).is_none(),
+        "no baseline lines must mean no run"
+    );
+    assert!(!repo_rs.join(".trailmark/baseline.txt").exists());
+    let langs = trailmark_core::default_langs();
+    let cache = IndexCache::new(&repo_rs.join(".trailmark"));
+    let data = update(root_rs, Some(&langs), 0, Some(&cache));
+    let body = assemble(&data, Some(ISSUE), CLI, 4096);
+    assert!(
+        !body.contains("BASELINE"),
+        "no baseline.txt must mean no BASELINE section:\n{body}"
+    );
+
+    // Python side: run_baselines reports None and writes nothing either
+    let Some(uv) = uv_path() else {
+        fs::remove_dir_all(&base).ok();
+        return;
+    };
+    if !python_available(&uv) {
+        fs::remove_dir_all(&base).ok();
+        return;
+    }
+    let repo_py = base.join("repo_py");
+    build_repo(&repo_py);
+    let cg = repo_py.join(".trailmark");
+    fs::create_dir_all(&cg).expect("mkdir .trailmark");
+    fs::write(
+        cg.join("profile.txt"),
+        "fact: only a fact\nrule: and a rule\n",
+    )
+    .expect("write profile.txt");
+    assert_eq!(python_run_baselines(&uv, &repo_py), "none");
+    assert!(!repo_py.join(".trailmark/baseline.txt").exists());
+    fs::remove_dir_all(&base).ok();
+}

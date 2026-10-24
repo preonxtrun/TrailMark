@@ -3,10 +3,12 @@
 
 pub mod outlines;
 pub mod plan;
+pub mod profile_cmds;
 pub mod ranker;
 
 pub use outlines::{generate_for, generate_top, outline_posix, outline_text};
 pub use plan::render_plan;
+pub use profile_cmds::{baseline_commands, run_baselines, MAX_COMMANDS, TAIL_LINES, TIMEOUT};
 pub use ranker::{issue_tokens, rank, rank_and_prior, Lead};
 
 /// G-imp4: contracts+snippets need headroom — each contracted lead displaces an

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use trailmark_cli::atlas::{assemble, assemble_with_leads};
-use trailmark_cli::focus::{effective_budget_for, generate_for, generate_top, Lead};
+use trailmark_cli::focus::{effective_budget_for, generate_for, generate_top, run_baselines, Lead};
 use trailmark_cli::probes::write_probe;
 use trailmark_cli::trails;
 use trailmark_core::{
@@ -406,6 +406,10 @@ fn cmd_focus(
         let target = leads.first().map(|l| l.path.clone()).unwrap_or_default();
         let _ = write_probe(&root, &runner, &target);
     }
+    // Baseline snapshots (profile-gated, opt-in): run `baseline:` commands
+    // BEFORE the agent starts and store the bounded output (profile_cmds.py);
+    // an optimization, never a failure.
+    let _ = run_baselines(root.to_string_lossy().as_ref());
     let changed = match write_block(&root.join(trailmark_core::AGENTS_FILENAME), &body) {
         Ok(c) => c,
         Err(e) => {

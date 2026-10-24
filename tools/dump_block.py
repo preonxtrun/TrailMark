@@ -9,7 +9,7 @@ byte.
 Usage:
     uv run python tools/dump_block.py --root REPO --issue "text" \
         [--cli generic] [--budget 2048] [--langs py,ts,js,go,rs] [--workers N] \
-        [--leads]
+        [--leads] [--baseline]
 
 With ``--leads`` the focus pipeline is mirrored: ``focus.ranker.rank`` (k=5)
 produces the leads, ``focus.cli_focus.effective_budget_for`` raises the budget,
@@ -44,6 +44,7 @@ _deterministic_captures.apply()
 from trailmark.atlas import assemble  # noqa: E402
 from trailmark.cache import IndexCache  # noqa: E402
 from trailmark.focus.cli_focus import effective_budget_for  # noqa: E402
+from trailmark.focus.profile_cmds import run_baselines  # noqa: E402
 from trailmark.focus.ranker import rank  # noqa: E402
 from trailmark.index import update  # noqa: E402
 
@@ -57,6 +58,13 @@ def main() -> int:
     parser.add_argument("--budget", type=int, default=2048, help="block budget bytes")
     parser.add_argument("--langs", default="py,ts,js,go,rs", help="comma-separated languages")
     parser.add_argument("--workers", type=int, default=0, help="parser workers")
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="run the profile's `baseline:` commands first, so "
+        ".trailmark/baseline.txt exists at assemble time and the BASELINE "
+        "section is emitted (mirrors the cli_focus baseline flow)",
+    )
     parser.add_argument(
         "--leads",
         action="store_true",
@@ -73,6 +81,9 @@ def main() -> int:
     cache = IndexCache(Path(root) / ".trailmark")
     langs = [part.strip() for part in args.langs.split(",") if part.strip()]
     data = update(root, langs, args.workers, cache)
+
+    if args.baseline:
+        run_baselines(root)
 
     leads = None
     budget = args.budget

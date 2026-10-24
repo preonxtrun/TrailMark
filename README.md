@@ -49,6 +49,21 @@ Quality-of-life checks: `trailmark doctor` (cache freshness, block present, budg
 `trailmark stats`. To measure the effect on your own workflow: `python -m bench.minibench`
 (see `docs/GENERATIONS.md`).
 
+## Measured results
+
+Paired A/B (same tasks, same model, same seed protocol) on psf/requests with
+opencode-hyde. Outcome-gated: every patch was verified against the repo's test suite.
+
+| task class | control | with trailmark | Δ | quality |
+|---|---:|---:|---|---|
+| orientation ("where is X") | 63.9K tok / 5.7 turns | 29.4K / 2.7 turns | **−54%** | "don't modify" honored |
+| bugfix (incl. a trap task) | 3.49M tok / 72 turns | 386K / 18 turns | **−89%** | correct behavior (trap detected) |
+| feature implementation | 3.77M tok / 95 turns | 1.23M / 31 turns | **−67%** | **100% verified-solve** |
+
+Method, per-generation history and the honest caveats: `docs/GENERATIONS.md`.
+How it compares with aider / Sourcegraph Code Finder / repomix / TokenEconomizer:
+`docs/COMPARISON.md`.
+
 ## Multi-agent runs
 
 Two supported patterns (both proven by the benchmark harness, which uses them itself):
