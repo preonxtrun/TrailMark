@@ -1,4 +1,4 @@
-"""Conformance suite — the hard guarantees of the codegraph layer.
+"""Conformance suite — the hard guarantees of the trailmark layer.
 
 Every test here enforces an invariant listed in docs/GUARANTEES.md. These must hold
 for ANY implementation generation (Python core, Rust core, future rewrites): the
@@ -9,7 +9,7 @@ G2  Determinism       — same inputs → byte-identical output
 G3  Budget            — the block never exceeds its byte budget
 G4  No leakage        — the issue text is the ONLY task input
 G5  Never crashes     — adversarial repos are indexed gracefully
-G6  Filesystem purity — init/focus writes ONLY AGENTS.md and .codegraph/
+G6  Filesystem purity — init/focus writes ONLY AGENTS.md and .trailmark/
 G7  Idempotence       — re-running focus with the same issue changes nothing
 """
 
@@ -22,12 +22,12 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.atlas import assemble
-from codegraph.cache import IndexCache
-from codegraph.emit.agents_md import read_block, remove_block, write_block
-from codegraph.focus.outlines import generate_top
-from codegraph.index import update
-from codegraph.model import BLOCK_START, DEFAULT_BUDGET_BYTES, IndexData
+from trailmark.atlas import assemble
+from trailmark.cache import IndexCache
+from trailmark.emit.agents_md import read_block, remove_block, write_block
+from trailmark.focus.outlines import generate_top
+from trailmark.index import update
+from trailmark.model import BLOCK_START, DEFAULT_BUDGET_BYTES, IndexData
 
 BODY = "# TEST ATLAS\nMAP\n- x.py:1 foo()"  # read_block strips surrounding newlines
 
@@ -40,7 +40,7 @@ def _snapshot(root: Path) -> dict[str, str]:
     return {
         str(p.relative_to(root)): _sha(p)
         for p in sorted(root.rglob("*"))
-        if p.is_file() and ".codegraph" not in p.parts and p.name != "AGENTS.md"
+        if p.is_file() and ".trailmark" not in p.parts and p.name != "AGENTS.md"
     }
 
 
@@ -92,7 +92,7 @@ def test_g1_non_destruction(tmp_path: Path, original: str):
 def test_g1_write_refuses_malformed_markers(tmp_path: Path):
     """A fake/dangling marker (e.g. inside a code fence) must freeze the writer, not mutate."""
     p = tmp_path / "AGENTS.md"
-    original = "code fence with fake marker:\n```\n<!-- codegraph:start v1 -->\n```\n"
+    original = "code fence with fake marker:\n```\n<!-- trailmark:start v1 -->\n```\n"
     p.write_text(original, encoding="utf-8")
     with pytest.raises(ValueError):
         write_block(p, BODY)
@@ -107,7 +107,7 @@ def test_g1_write_refuses_malformed_markers(tmp_path: Path):
 
 def _index(tmp_path: Path) -> tuple[IndexData, IndexCache]:
     repo = make_repo(tmp_path)
-    cache = IndexCache(repo / ".codegraph")
+    cache = IndexCache(repo / ".trailmark")
     data = update(root=str(repo), langs=None, workers=1, cache=cache)
     return data, cache
 
@@ -122,7 +122,7 @@ def test_g2_determinism(tmp_path: Path):
 
 def test_g3_budget_sweep(tmp_path: Path):
     data, _ = _index(tmp_path)
-    from codegraph.util.tokens import byte_len
+    from trailmark.util.tokens import byte_len
 
     for budget in (512, 768, 1024, 1536, 2048, 4096):
         body = assemble(data, "refresh session tokens", "generic", budget)
@@ -135,19 +135,19 @@ def test_g3_budget_sweep(tmp_path: Path):
 def test_g4_no_leakage(tmp_path: Path):
     """The issue text is the ONLY task input: record canaries must never surface."""
     repo = make_repo(tmp_path)
-    cache = IndexCache(repo / ".codegraph")
+    cache = IndexCache(repo / ".trailmark")
     update(root=str(repo), langs=None, workers=1, cache=cache)
 
     canary_test = "tests/test_leak.py::test_canary_98123"
     canary_patch = "GOLD_PATCH_CANARY_XYZQ"
-    record = {  # what the bench harness holds — codegraph must never see these
+    record = {  # what the bench harness holds — trailmark must never see these
         "problem_statement": "session refresh drops tokens on redirect",
         "FAIL_TO_PASS": json.dumps([canary_test]),
         "patch": canary_patch,
     }
     issue = record["problem_statement"]  # the ONLY field handed to the layer
 
-    from codegraph.focus.cli_focus import run as focus_run
+    from trailmark.focus.cli_focus import run as focus_run
 
     args = argparse.Namespace(
         root=str(repo), issue=issue, issue_file=None, cli="generic", budget=DEFAULT_BUDGET_BYTES, json=False
@@ -155,7 +155,7 @@ def test_g4_no_leakage(tmp_path: Path):
     assert focus_run(args) == 0
 
     artifacts = (repo / "AGENTS.md").read_text(encoding="utf-8")
-    for path in (repo / ".codegraph").rglob("*"):
+    for path in (repo / ".trailmark").rglob("*"):
         if path.is_file():
             artifacts += path.read_text(encoding="utf-8", errors="ignore")
     assert canary_test not in artifacts
@@ -177,7 +177,7 @@ def test_g5_adversarial_repo_never_crashes(tmp_path: Path):
     deep.mkdir(parents=True)
     (deep / "deep.py").write_text("def deep_fn():\n    return 1\n")
 
-    cache = IndexCache(repo / ".codegraph")
+    cache = IndexCache(repo / ".trailmark")
     data = update(root=str(repo), langs=None, workers=1, cache=cache)  # must not raise
     body = assemble(data, "deep function héllo", "generic", 2048)  # must not raise
     assert isinstance(body, str)
@@ -187,15 +187,15 @@ def test_g5_adversarial_repo_never_crashes(tmp_path: Path):
 
 
 def test_g6_filesystem_purity(tmp_path: Path):
-    """init/focus may only write AGENTS.md and .codegraph/** — nothing else."""
+    """init/focus may only write AGENTS.md and .trailmark/** — nothing else."""
     repo = make_repo(tmp_path)
     before = _snapshot(repo)
 
-    cache = IndexCache(repo / ".codegraph")
+    cache = IndexCache(repo / ".trailmark")
     data = update(root=str(repo), langs=None, workers=1, cache=cache)
     body = assemble(data, "session refresh", "generic", 2048)
     write_block(repo / "AGENTS.md", body)
-    generate_top(data, repo / ".codegraph" / "outlines", k=8)
+    generate_top(data, repo / ".trailmark" / "outlines", k=8)
 
     after = _snapshot(repo)
     changed = {path for path in set(before) | set(after) if before.get(path) != after.get(path)}
@@ -208,10 +208,10 @@ def test_g6_filesystem_purity(tmp_path: Path):
 
 
 def test_g7_focus_idempotence(tmp_path: Path):
-    from codegraph.focus.cli_focus import run as focus_run
+    from trailmark.focus.cli_focus import run as focus_run
 
     make_repo(tmp_path)
-    cache = IndexCache(tmp_path / ".codegraph")
+    cache = IndexCache(tmp_path / ".trailmark")
     update(root=str(tmp_path), langs=None, workers=1, cache=cache)
 
     def run_once():
@@ -263,7 +263,7 @@ def test_g9_layer_is_cli_agnostic(tmp_path: Path):
     # no capitalized vendor tool names anywhere
     for tool in ("Read", "Grep", "Glob", "Bash", "Edit", "MultiEdit", "Write"):
         assert not re.search(rf"\b{tool}\b", body), f"tool name {tool!r} leaked into the block"
-    # every path reference is repo-relative or codegraph-private
+    # every path reference is repo-relative or trailmark-private
     for token in body.replace("(", " ").replace(")", " ").replace(":", " ").split():
-        if "/" in token and not token.startswith((".codegraph", "#")):
+        if "/" in token and not token.startswith((".trailmark", "#")):
             assert not token.startswith(("/", "~")), f"absolute path leaked: {token}"

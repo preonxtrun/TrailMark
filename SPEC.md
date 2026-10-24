@@ -1,4 +1,4 @@
-# codegraph — Build Spec v1 (frozen contracts)
+# trailmark — Build Spec v1 (frozen contracts)
 
 Read this fully before writing code. The data model, cache API, and block emitter already exist;
 build against them, do not change their public interfaces.
@@ -6,7 +6,7 @@ build against them, do not change their public interfaces.
 ## Mission
 
 A hidden optimization layer between any coding CLI (opencode / codex / claude code) and the
-codebase. Pure file injection: a marked block in `AGENTS.md` plus `.codegraph/` state.
+codebase. Pure file injection: a marked block in `AGENTS.md` plus `.trailmark/` state.
 No MCP, no plugins, no proxies, no CLI modification, no runtime LLM calls.
 Goal: −20..−40% $/task on SWE-bench Verified at noise-level resolve% delta.
 
@@ -21,7 +21,7 @@ Goal: −20..−40% $/task on SWE-bench Verified at noise-level resolve% delta.
 3. **No leakage.** Never emit FAIL_TO_PASS / PASS_TO_PASS / gold-patch information. The only
    task input is the issue/problem-statement text.
 4. **Never crash.** Unsupported language → regex fallback extractor. Missing cache → clean
-   error "run `codegraph init` first" (exit 2). Malformed repo → best-effort index.
+   error "run `trailmark init` first" (exit 2). Malformed repo → best-effort index.
 5. **CLI untouched.** We only write files under the repo. Nothing may hook, patch, or wrap the
    coding CLI. Block lives between `BLOCK_START`/`BLOCK_END` markers; nothing outside them is
    modified.
@@ -45,7 +45,7 @@ bench/   standard SWE-bench pipeline runner: control vs treatment arm
 - `model.py`: `Symbol(file,name,kind,line,end_line,signature,doc)`, `Ref(src_file,dst_name,dst_file,line)`,
   `FileEntry(path,lang,mtime,size,symbols)`, `IndexData(root,files,refs)` with `.symbols()`,
   constants `BLOCK_START`, `BLOCK_END`, `DEFAULT_BUDGET_BYTES=2048`.
-- `cache.py`: `IndexCache(codegraph_dir)` with `load() -> IndexData | None`, `save(IndexData)`,
+- `cache.py`: `IndexCache(trailmark_dir)` with `load() -> IndexData | None`, `save(IndexData)`,
   `search(query, k) -> list[Hit]` (FTS5 BM25 over symbols; lower bm25 = better), `close()`.
 - `emit/agents_md.py`: `read_block(path)`, `write_block(path, body) -> bool` (True if changed;
   creates file if missing, preserves content outside markers, no-op when body unchanged),
@@ -57,7 +57,7 @@ bench/   standard SWE-bench pipeline runner: control vs treatment arm
 Order and format (sections dropped per budget rules above):
 
 ```
-# CODEGRAPH ATLAS — auto-generated, do not edit inside markers
+# TRAILMARK ATLAS — auto-generated, do not edit inside markers
 RULES
 <flight rules, wrapped tight, per-cli variant>
 MAP
@@ -69,7 +69,7 @@ TESTS
 PLAN
 LEADS (verify, don't trust):
 1. <path>:<line>-<end> — <why>      (focus only, top-5)
-OUTLINES: .codegraph/outlines/<rel>.md
+OUTLINES: .trailmark/outlines/<rel>.md
 GLOSSARY
 - <term> = <meaning> (<path>:<line>)
 ```
@@ -91,12 +91,12 @@ targeted `sed -n 'A,Bp'`; persist probe scripts — do not regenerate variants."
 ## CLI contract (cli.py)
 
 ```
-codegraph init   [--root .] [--budget N] [--langs py,ts,js,go,rs] [--workers N] [--force]
-codegraph focus  "ISSUE" | --issue-file F  [--cli auto|claude|codex|opencode|generic] [--budget N]
-codegraph remove [--purge]
-codegraph stats
-codegraph doctor
-codegraph watch  [--interval S]        # optional, simple polling loop
+trailmark init   [--root .] [--budget N] [--langs py,ts,js,go,rs] [--workers N] [--force]
+trailmark focus  "ISSUE" | --issue-file F  [--cli auto|claude|codex|opencode|generic] [--budget N]
+trailmark remove [--purge]
+trailmark stats
+trailmark doctor
+trailmark watch  [--interval S]        # optional, simple polling loop
 ```
 
 - `init`: build/update index → outlines for top-32 PageRank files → write atlas-only block.
@@ -129,9 +129,9 @@ python -m bench.run --dataset princeton-nlp/SWE-bench_Verified --slice 0:100 \
 ```
 
 - Per (instance, arm, seed): official image `swebench/sweb.eval.x86_64.<instance>`; treatment
-  execs the setup (pip install -e mounted src; `codegraph init`; `codegraph focus --issue-file
+  execs the setup (pip install -e mounted src; `trailmark init`; `trailmark focus --issue-file
   /tmp/issue.txt --cli <cli>`); agent run via stock headless CLI inside container; patch
-  extracted with `git diff -- . ':(exclude).codegraph' ':(exclude)AGENTS.md'`; usage parsed by
+  extracted with `git diff -- . ':(exclude).trailmark' ':(exclude)AGENTS.md'`; usage parsed by
   `bench/cost.py` adapters; record JSONL per run; `--grade` runs official grading (swebench
   harness or prints exact `sb-cli` command when unavailable).
 - `cost.py`: adapters for claude stream-json (`usage`: input/cache_read/cache_creation/output
@@ -145,11 +145,11 @@ python -m bench.run --dataset princeton-nlp/SWE-bench_Verified --slice 0:100 \
 
 ## Ownership (do not touch files outside your list)
 
-- INDEX: `src/codegraph/index/**`, `src/codegraph/cache.py` (extend, keep API), parser deps in
+- INDEX: `src/trailmark/index/**`, `src/trailmark/cache.py` (extend, keep API), parser deps in
   `pyproject.toml` (only if the language pack is unavailable), `tests/test_index*.py`
-- ATLAS: `src/codegraph/atlas/**`, `src/codegraph/cli.py`, `src/codegraph/emit/**`,
+- ATLAS: `src/trailmark/atlas/**`, `src/trailmark/cli.py`, `src/trailmark/emit/**`,
   `tests/test_atlas*.py`, `tests/test_emit.py`
-- FOCUS: `src/codegraph/focus/**`, `tests/test_focus*.py`
+- FOCUS: `src/trailmark/focus/**`, `tests/test_focus*.py`
 - BENCH: `bench/**`, `tests/test_bench*.py`
 - Shared (frozen): `model.py`, `util/**`, `emit/agents_md.py` API, `pyproject.toml` (except
   INDEX's parser deps), `SPEC.md`, `README.md`

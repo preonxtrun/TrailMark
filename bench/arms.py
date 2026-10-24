@@ -4,8 +4,8 @@ Standard SWE-bench pipeline, treatment-vs-control:
 
 - CONTROL: stock official image, stock CLI. ``SETUP_CONTROL`` is empty.
 - TREATMENT: identical run plus ONE extra setup step inside the container — install
-  codegraph from the mounted source tree, ``codegraph init``, ``codegraph focus`` with the
-  issue text. Pure files under the repo (``.codegraph/`` + a marked block in
+  trailmark from the mounted source tree, ``trailmark init``, ``trailmark focus`` with the
+  issue text. Pure files under the repo (``.trailmark/`` + a marked block in
   ``AGENTS.md``); the CLI itself is never modified (SPEC invariant #5).
 
 The ONLY task text that ever reaches the agent is the dataset's ``problem_statement``.
@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 #: Path of the issue file written inside the container (SETUP_TREATMENT and run.py agree).
 ISSUE_PATH = "/tmp/issue.txt"
 
-#: Injected-block budget passed to ``codegraph init`` (bytes; SPEC default 2048).
+#: Injected-block budget passed to ``trailmark init`` (bytes; SPEC default 2048).
 BUDGET_BYTES = 2048
 
-#: Patch pathspec: everything staged EXCEPT codegraph's own footprint (SPEC bench rules).
-PATCH_PATHSPEC = "-- . ':(exclude).codegraph' ':(exclude)AGENTS.md'"
+#: Patch pathspec: everything staged EXCEPT trailmark's own footprint (SPEC bench rules).
+PATCH_PATHSPEC = "-- . ':(exclude).trailmark' ':(exclude)AGENTS.md'"
 
 #: Fields whose values must never appear (even partially) in the issue text. Checked both
 #: lower-case and UPPER-case because SWE-bench records use either convention.
@@ -70,14 +70,14 @@ def SETUP_TREATMENT(
 ) -> list[str]:
     """Docker-exec shell steps for the treatment arm, in order.
 
-    1. install codegraph: when *bin_mount* is given (path of a prebuilt
-       ``codegraph`` binary inside the container, e.g. the Rust release build
+    1. install trailmark: when *bin_mount* is given (path of a prebuilt
+       ``trailmark`` binary inside the container, e.g. the Rust release build
        bind-mounted by run.py), it is copied onto PATH — no pip/uv, no Python
-       needed in the image. Otherwise codegraph is installed from the mounted
+       needed in the image. Otherwise trailmark is installed from the mounted
        Python source (``pip install -e`` with a ``uv tool install`` fallback;
        assumes the image has a build backend and network),
-    2. ``codegraph init`` — atlas-only block, deterministic, byte-budgeted,
-    3. ``codegraph focus`` — full block (atlas + PLAN) regenerated from cache + issue.
+    2. ``trailmark init`` — atlas-only block, deterministic, byte-budgeted,
+    3. ``trailmark focus`` — full block (atlas + PLAN) regenerated from cache + issue.
 
     The issue file at :data:`ISSUE_PATH` must exist before step 3 (run.py copies it into
     the container before executing these steps). Each string is run via
@@ -88,13 +88,13 @@ def SETUP_TREATMENT(
     cli_quoted = shlex.quote(cli)
     if bin_mount:
         bin_src = shlex.quote(bin_mount)
-        install = f"install -m 0755 {bin_src} /usr/local/bin/codegraph"
+        install = f"install -m 0755 {bin_src} /usr/local/bin/trailmark"
     else:
         install = f"pip install --quiet -e {src} || uv tool install --force {src}"
     return [
         install,
-        f"codegraph init --root {repo} --budget {BUDGET_BYTES} --json",
-        f"codegraph focus --issue-file {ISSUE_PATH} --cli {cli_quoted} --root {repo} --json",
+        f"trailmark init --root {repo} --budget {BUDGET_BYTES} --json",
+        f"trailmark focus --issue-file {ISSUE_PATH} --cli {cli_quoted} --root {repo} --json",
     ]
 
 
@@ -203,10 +203,10 @@ def write_issue_file(
 
 
 def patch_cmd(repo_dir: str) -> str:
-    """Shell one-liner producing the agent patch, codegraph's footprint excluded.
+    """Shell one-liner producing the agent patch, trailmark's footprint excluded.
 
     ``git add -A`` stages everything (including untracked files); the cached diff then
-    excludes ``.codegraph/`` and ``AGENTS.md`` so the graded patch contains only what the
+    excludes ``.trailmark/`` and ``AGENTS.md`` so the graded patch contains only what the
     agent changed. ``--binary`` keeps binary edits intact, matching official grading.
     """
     return (

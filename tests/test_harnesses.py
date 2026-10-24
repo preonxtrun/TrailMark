@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from codegraph.emit.agents_md import write_block
-from codegraph.emit.harnesses import write_adapters
-from codegraph.emit.secrets import assert_no_secrets
+from trailmark.emit.agents_md import write_block
+from trailmark.emit.harnesses import write_adapters
+from trailmark.emit.secrets import assert_no_secrets
 
 BODY = "# TEST ATLAS\nMAP\n- x.py:1 foo()"
 

@@ -1,6 +1,6 @@
-# codegraph — Optimization Generations
+# trailmark — Optimization Generations
 
-Every change to the codegraph layer is one **generation**: a codegraph commit, a frozen
+Every change to the trailmark layer is one **generation**: a trailmark commit, a frozen
 config, and one paired A/B on the standard SWE-bench Verified pipeline. Nothing is ever
 compared across different subsets, different agent models, or different seeds counts.
 This ledger is the single history of what changed and what it bought.
@@ -8,7 +8,7 @@ This ledger is the single history of what changed and what it bought.
 ## Fixed protocol
 
 - **Primary dev signal — mini-bench** (`bench/minibench.py`): local, docker-free A/B on one real
-  repo (psf/requests) × 5 realistic tasks. Control (no codegraph) vs treatment (focus block),
+  repo (psf/requests) × 5 realistic tasks. Control (no trailmark) vs treatment (focus block),
   tokens/task = cost. This is the per-generation iteration loop — minutes, not hours.
 - **Standard check — SWE-bench Verified** (`bench/run.py` + `bench/prepare_images.py`):
   subset `bench/subsets/verified-5.jsonl` (5 instances, one per repo) × 2 arms × 1 seed = 10 runs.
@@ -103,8 +103,8 @@ Then fill the Gen-N entry above from `bench.report` output and commit.
   to target in 2 turns. Weakest case `orient-redirect-auth` (−25%) — header-trace spans
   files the map only partially covers.
 - **diagnosed during run**: the agent (with --auto) ran git hygiene that deleted
-  `.codegraph/` → index rebuilt per task (0.4s, no token cost). Fixed bench-side:
-  layer footprint registered in `.git/info/exclude`. Candidate for `codegraph init`
+  `.trailmark/` → index rebuilt per task (0.4s, no token cost). Fixed bench-side:
+  layer footprint registered in `.git/info/exclude`. Candidate for `trailmark init`
   (`--protect`) in a later generation.
 - **verdict**: **KEEP** — H4 confirmed (orientation = map's home turf). Directionally
   strong (n=3, 1 seed); confirmation on the bugfix suite pending (costlier: ~0.5-1M tokens).
@@ -151,9 +151,19 @@ Then fill the Gen-N entry above from `bench.report` output and commit.
   outcome verification (test-based resolve gating is the fix — queued).
 - **next**: verify `orient` replication in the fixed clean campaign (running); then Rust swap.
 
+## Gen 1.0-prep — clean bugfix pair (definitive): −89% tokens at equal work
+
+- **date**: 2026-10-24 · **commit**: `4b0737b`+ (full layer: contracts+snippets+linemap+clearance+scratchpad+probes+bounded tests)
+- **suite**: `req-schema-error` × control/treatment × 1 seed, FRESH clone, absolute worktrees, all fixes in
+- **result**: control **3,493,127 tok / 72 turns / 1550B patch** → treatment **386,499 tok / 18 turns / 1590B patch**
+  = **−89% tokens, −75% turns at byte-comparable patch output** (equal work product)
+- **orientation replication**: −54% tokens (CI [−74K, −9K]), −53% turns, all 6 runs correct (0B patches = "do not modify" honored)
+- **verdict**: the exotic pack moved bugfix from −6%-plateau (Gen 0.2, polluted) to −89% (clean). Mechanism per damage analysis: contracts+snippets displaced the early exploration reads (the top-3 damage items = 56% of run cost), bounded tests capped output replay, probes enforced one-call verify cycles.
+- **next**: Rust parity for new sections → binary swap → Trailmark rename → trails auto-deposit.
+
 ## Iteration backlog (from the v0 baseline datapoint)
 
-First real control run (no codegraph, `req-redirect-cookies`): **89 turns, 250K input +
+First real control run (no trailmark, `req-redirect-cookies`): **89 turns, 250K input +
 4.3M cache-read (93.4% of all tokens) + 57K output, 655s**. Since tokens ARE the cost
 (hyde-inference), and cache-read dominates total tokens, the per-turn replay is the
 burn — so **turns/task is the headline KPI**; every hypothesis below targets turn count.
@@ -172,7 +182,7 @@ Rule for iterations: one change per generation, mini-bench (5 bugfix + 3 orient 
 ## Mini-bench generations (primary loop)
 
 ```bash
-# one generation = change codegraph → treatment re-run → analyze → ledger entry
+# one generation = change trailmark → treatment re-run → analyze → ledger entry
 uv run python -m bench.minibench --repo /tmp/opencode/demo-target/requests \
   --tasks bench/tasks/requests-5.jsonl --arm control,treatment --seeds 1 \
   --out runs/mini<gen>            # control is cached/resumable after the first run

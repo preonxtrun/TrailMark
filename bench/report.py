@@ -354,7 +354,7 @@ def render_markdown(report: Mapping[str, object]) -> str:
         ),
     ]
     lines = [
-        "# codegraph bench — paired report",
+        "# trailmark bench — paired report",
         "",
         (
             f"bootstrap={report.get('bootstrap')} seed={report.get('seed')} "

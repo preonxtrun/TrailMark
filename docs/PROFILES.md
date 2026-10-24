@@ -7,7 +7,7 @@ once** — the mechanism the cost-inefficiency research measured at up to −41.
 
 ## Format
 
-`.codegraph/profile.txt` inside the repo — zero dependencies, one entry per line:
+`.trailmark/profile.txt` inside the repo — zero dependencies, one entry per line:
 
 ```
 fact: partitions: gpu (A100-80G, max 24h), cpu (max 72h)
@@ -24,7 +24,7 @@ rule: check sacct once per job id; never poll squeue in a loop
 
 - **Greenfield**: there is nothing to index on day 0 — the profile carries the structure
   contract (layout, naming, stack, entry points) *before* the first line of code exists.
-  Once code accretes, `codegraph init` builds a real map and both mechanisms coexist.
+  Once code accretes, `trailmark init` builds a real map and both mechanisms coexist.
 - **Slurm/GPU clusters**: cluster facts are tribal knowledge agents re-derive every run
   (partitions, gres, modules, scratch paths, accounting). The profile states them once;
   the rules encode job discipline (sacct once, reuse job templates, ledger experiments,
@@ -36,8 +36,8 @@ rule: check sacct once per job id; never poll squeue in a loop
 ## Example
 
 See `bench/profiles/lab-slurm.example.profile.txt` — a complete Slurm GPU-cluster profile.
-Copy it to `.codegraph/profile.txt`, edit to your cluster, then use the layer exactly as
-always: `codegraph focus "<task>"` before launching any CLI.
+Copy it to `.trailmark/profile.txt`, edit to your cluster, then use the layer exactly as
+always: `trailmark focus "<task>"` before launching any CLI.
 
 ## Standard benchmark for lab mode (backlog)
 

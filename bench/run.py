@@ -6,7 +6,7 @@ Standard pipeline, nothing else differs between arms (SPEC "bench/"):
         --cli claude --arm control,treatment --seeds 3 --parallel 4 --out runs/demo [--grade] [--dry]
 
 Per (instance, arm, seed): start the official image ``swebench/sweb.eval.x86_64.<id>``,
-exec the arm's setup (treatment installs codegraph + runs ``init``/``focus``; control does
+exec the arm's setup (treatment installs trailmark + runs ``init``/``focus``; control does
 nothing), pipe the issue text (``problem_statement`` ONLY, leak-gated) to the stock
 headless CLI, extract the patch with the exclude-pathspec, parse usage via ``bench.cost``,
 and append a record. State is resumable: completed tasks are skipped on rerun.
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DATASET = "princeton-nlp/SWE-bench_Verified"
 DEFAULT_REPO_DIR = "/testbed"
-DEFAULT_SRC_MOUNT = "/opt/codegraph-src"
+DEFAULT_SRC_MOUNT = "/opt/trailmark-src"
 DEFAULT_AGENT_TIMEOUT_S = 1800
 IMAGE_REPO = "swebench/sweb.eval.x86_64"
 SETUP_TIMEOUT_S = 600
@@ -776,7 +776,7 @@ def _grade(out_dir: Path, args: argparse.Namespace) -> None:
 
 
 def _default_src() -> Path | None:
-    """Repo root hosting the codegraph project (mounted into containers)."""
+    """Repo root hosting the trailmark project (mounted into containers)."""
     src = Path(__file__).resolve().parents[1]
     return src if (src / "pyproject.toml").is_file() else None
 
@@ -818,7 +818,7 @@ def _dry(args: argparse.Namespace, tasks: Sequence[Task]) -> int:
         logger.warning("--grade is ignored with --dry")
     src = Path(args.src_mount).resolve() if args.src_mount else _default_src()
     if src is None:
-        logger.warning("could not locate the codegraph source to mount — pass --src-mount")
+        logger.warning("could not locate the trailmark source to mount — pass --src-mount")
     for task in tasks:
         setup_steps = (
             len(SETUP_TREATMENT(args.cli, args.repo_dir, DEFAULT_SRC_MOUNT))
@@ -852,7 +852,7 @@ def _campaign(args: argparse.Namespace, tasks: Sequence[Task]) -> int:
     src = Path(args.src_mount).resolve() if args.src_mount else _default_src()
     if src is None or not (src / "pyproject.toml").is_file():
         raise CampaignError(
-            f"codegraph source for mounting not found (pass --src-mount); got {src}"
+            f"trailmark source for mounting not found (pass --src-mount); got {src}"
         )
     if not docker_available():
         return 2
@@ -975,7 +975,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--src-mount",
         default=None,
-        help=f"host path to the codegraph project (mounted at {DEFAULT_SRC_MOUNT}); default: this repo",
+        help=f"host path to the trailmark project (mounted at {DEFAULT_SRC_MOUNT}); default: this repo",
     )
     parser.add_argument("--grade", action="store_true", help="run official grading afterwards (swebench extra)")
     parser.add_argument("--dry", action="store_true", help="validate config + plan + cost fixtures; no docker")

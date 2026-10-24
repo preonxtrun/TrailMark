@@ -157,9 +157,9 @@ def test_price_matching_and_fallback():
 # --------------------------------------------------------------------------
 
 GOLD_PATCH = (
-    "diff --git a/src/codegraph/parse.py b/src/codegraph/parse.py\n"
-    "--- a/src/codegraph/parse.py\n"
-    "+++ b/src/codegraph/parse.py\n"
+    "diff --git a/src/trailmark/parse.py b/src/trailmark/parse.py\n"
+    "--- a/src/trailmark/parse.py\n"
+    "+++ b/src/trailmark/parse.py\n"
     "@@ -10,7 +10,7 @@\n"
     "+    return sorted(nodes, key=lambda node: (node.path, node.name, node.kind))\n"
 )
@@ -229,22 +229,22 @@ def test_write_issue_file_gates_and_roundtrips(tmp_path):
 
 def test_setup_control_empty_and_treatment_shape():
     assert SETUP_CONTROL == []
-    steps = SETUP_TREATMENT("claude", "/testbed", "/opt/codegraph-src")
+    steps = SETUP_TREATMENT("claude", "/testbed", "/opt/trailmark-src")
     assert len(steps) == 3
     assert "pip install" in steps[0] and "uv tool install" in steps[0]
-    assert "codegraph init --root /testbed --budget 2048 --json" in steps[1]
+    assert "trailmark init --root /testbed --budget 2048 --json" in steps[1]
     assert (
-        "codegraph focus --issue-file /tmp/issue.txt --cli claude --root /testbed --json"
+        "trailmark focus --issue-file /tmp/issue.txt --cli claude --root /testbed --json"
         in steps[2]
     )
-    assert PATCH_PATHSPEC == "-- . ':(exclude).codegraph' ':(exclude)AGENTS.md'"
+    assert PATCH_PATHSPEC == "-- . ':(exclude).trailmark' ':(exclude)AGENTS.md'"
 
 
 GIT_AVAILABLE = shutil.which("git") is not None
 
 
 @pytest.mark.skipif(not GIT_AVAILABLE, reason="git not available")
-def test_patch_pathspec_excludes_codegraph_and_agents_md(tmp_path):
+def test_patch_pathspec_excludes_trailmark_and_agents_md(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
 
@@ -258,9 +258,9 @@ def test_patch_pathspec_excludes_codegraph_and_agents_md(tmp_path):
     git("add", "-A")
     git("commit", "-q", "-m", "init")
     (repo / "app.py").write_text("value = 42  # the real change\n", encoding="utf-8")
-    (repo / ".codegraph").mkdir()
-    (repo / ".codegraph" / "cache.sqlite3").write_text("state", encoding="utf-8")
-    (repo / "AGENTS.md").write_text("CODEGRAPH ATLAS block\n", encoding="utf-8")
+    (repo / ".trailmark").mkdir()
+    (repo / ".trailmark" / "cache.sqlite3").write_text("state", encoding="utf-8")
+    (repo / "AGENTS.md").write_text("TRAILMARK ATLAS block\n", encoding="utf-8")
 
     proc = subprocess.run(
         patch_cmd(str(repo)),
@@ -274,7 +274,7 @@ def test_patch_pathspec_excludes_codegraph_and_agents_md(tmp_path):
     patch = proc.stdout
     assert "app.py" in patch
     assert "the real change" in patch
-    assert ".codegraph" not in patch
+    assert ".trailmark" not in patch
     assert "AGENTS.md" not in patch
 
 

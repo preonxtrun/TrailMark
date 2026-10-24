@@ -7,9 +7,9 @@ or write anywhere it shouldn't. CI fails if one regresses.
 | # | Guarantee | Meaning |
 |---|-----------|---------|
 | G1 | **Non-destruction** | Only bytes between the markers ever change; removal restores the original byte-for-byte (a pre-existing empty file stays). Malformed markers → write refuses loudly, touches nothing. |
-| G4 | **No leakage** | The issue text is the only task input. Benchmark fields (gold patches, FAIL_TO_PASS) can never reach the block or `.codegraph/`. |
+| G4 | **No leakage** | The issue text is the only task input. Benchmark fields (gold patches, FAIL_TO_PASS) can never reach the block or `.trailmark/`. |
 | G5 | **Never crashes** | Binary files, broken syntax, huge files, unicode names, deep nesting — indexed gracefully, fallbacks everywhere. |
-| G6 | **Filesystem purity** | `init`/`focus` write only `AGENTS.md` and `.codegraph/**` — verified by full-tree hashing. |
+| G6 | **Filesystem purity** | `init`/`focus` write only `AGENTS.md` and `.trailmark/**` — verified by full-tree hashing. |
 | G8 | **Enforceable time budget** | Runs execute in their own process group; the whole group dies at the timeout (no orphaned agents, no hung runners). |
 
 Plus the design contract: **G9 — the layer is CLI-agnostic.** One plain AGENTS.md block,

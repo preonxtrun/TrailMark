@@ -1,12 +1,12 @@
 # bench — SWE-bench Verified campaign harness
 
-Measures codegraph's effect with the **standard** SWE-bench pipeline: official instances,
+Measures trailmark's effect with the **standard** SWE-bench pipeline: official instances,
 official docker images, stock headless coding CLIs, official grading. The treatment arm's
 entire footprint is ONE extra setup step inside the container (`pip install -e` +
-`codegraph init` + `codegraph focus` — plain files: a marked block in `AGENTS.md` and
-`.codegraph/` state). The control arm is the stock container, untouched.
+`trailmark init` + `trailmark focus` — plain files: a marked block in `AGENTS.md` and
+`.trailmark/` state). The control arm is the stock container, untouched.
 
-This package is standalone: it imports **nothing** from `src/codegraph`.
+This package is standalone: it imports **nothing** from `src/trailmark`.
 
 ## Layout
 
@@ -113,8 +113,8 @@ The only task text that ever leaves the runner is `problem_statement`:
    pre-existing repo content, not gold information; the 40-char threshold keeps naturally
    occurring short test-id mentions from false-positiving.
 3. Patch extraction never sees grading data: `git add -A && git diff --cached --binary
-   -- . ':(exclude).codegraph' ':(exclude)AGENTS.md'` — the agent's patch only, with
-   codegraph's own footprint excluded.
+   -- . ':(exclude).trailmark' ':(exclude)AGENTS.md'` — the agent's patch only, with
+   trailmark's own footprint excluded.
 
 ## Image tags
 
@@ -172,7 +172,7 @@ host env). Add more in `bench/run.py:ENV_PASSTHROUGH`.
   multi-line text). Flags drift between CLI versions — verify each command manually on
   your machine before a real campaign, and check that the CLIs accept stdin.
 - **Treatment setup** assumes the image has `pip` (or `uv`) and network access to
-  install `-e /opt/codegraph-src` (the host `--src-mount`, default: this repo). The
+  install `-e /opt/trailmark-src` (the host `--src-mount`, default: this repo). The
   container self-terminates ~2 min after the agent budget; `docker rm -f` also runs in a
   `finally`.
 - **Seeds are labels, not RNG seeds.** Stock CLIs are not seeded; `--seeds N` repeats

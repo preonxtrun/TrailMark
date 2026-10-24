@@ -3,7 +3,7 @@
 WHY THIS EXISTS (ref-count drift diagnosis, psf/requests clone):
 
 py-tree-sitter's ``QueryCursor.captures()`` — the dict-of-lists API used by
-``codegraph.index.parser._extract_refs`` — returns captured nodes in a
+``trailmark.index.parser._extract_refs`` — returns captured nodes in a
 per-parse-random order: the order is stable for one tree object, but differs
 between two parses of the same bytes, between processes, and is NOT stabilised
 by ``PYTHONHASHSEED`` (observed on tree-sitter 0.25.x and 0.26.0).
@@ -24,13 +24,13 @@ capture sets, symbols (sorted downstream anyway) and resolution semantics are
 unchanged; only the above-cap subset selection becomes deterministic and equal
 to the Rust implementation's document-order behaviour.
 
-If ``src/codegraph/index/parser.py`` is ever fixed to sort captures itself,
+If ``src/trailmark/index/parser.py`` is ever fixed to sort captures itself,
 this shim becomes redundant and can be dropped.
 """
 
 from __future__ import annotations
 
-_APPLIED = "_codegraph_deterministic_captures"
+_APPLIED = "_trailmark_deterministic_captures"
 
 
 def _node_order(node) -> tuple[int, int]:

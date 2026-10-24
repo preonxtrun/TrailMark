@@ -1,4 +1,4 @@
-# How codegraph compares — what we learned from everyone
+# How trailmark compares — what we learned from everyone
 
 The space is active. This is the honest teardown of the best-known tools, what we
 adopted from each, and where the deliberate differences are.
@@ -12,7 +12,7 @@ adopted from each, and where the deliberate differences are.
 | **cairn-framework** | Blueprint → map → drift gate at commit boundary | "Context as enforced artifact" | They gate *architecture conformance*; we optimize *cost per task*. Complementary, different goal |
 | **agentsgen / agents-repo / OpenWiki** | Auto-generate AGENTS.md conventions | The AGENTS.md channel itself (their cautionary tale: generic overviews measured **+20% cost**, arXiv 2609.30725-adjacent ETH result) | We never generate prose overviews — the block is a **structural index + behavioral rules** only, and our ledger gates every change against the baseline |
 | **TokenEconomizer** (arXiv 2610.22732) | Micro-skills injection, tool pruning, loop intervention across task sequences | Cross-task learning premise (validated: −18.4–30.9%) | They modify the CLI (tool pruning, runtime intervention); we **never touch it**. Complementary — could stack |
-| **agents-lint** | Staleness detection for context files | `codegraph doctor` staleness checks | We also auto-refresh (watch mode, git hook) instead of only linting |
+| **agents-lint** | Staleness detection for context files | `trailmark doctor` staleness checks | We also auto-refresh (watch mode, git hook) instead of only linting |
 | **GEPA** (ICLR '26) | Reflective prompt evolution, 35× fewer rollouts than RL | Noted for the backlog | Rejected for now: needs an eval meta-loop around the CLI; our flight rules ship hand-written (the measured −41.7% mechanism) |
 
 ## The differentiators that no tool combines

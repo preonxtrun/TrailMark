@@ -7,7 +7,7 @@ resolved ref to stdout in the pipeline's own deterministic order:
 
     src_file<TAB>dst_name<TAB>dst_file<TAB>line
 
-Diff this byte-for-byte against the Rust equivalent (`codegraph refs --tsv`) to
+Diff this byte-for-byte against the Rust equivalent (`trailmark refs --tsv`) to
 diagnose ref-resolution drift between the two implementations.
 
 Usage:
@@ -33,7 +33,7 @@ import _deterministic_captures  # noqa: E402
 
 _deterministic_captures.apply()
 
-from codegraph.index import build  # noqa: E402
+from trailmark.index import build  # noqa: E402
 
 
 def main() -> int:

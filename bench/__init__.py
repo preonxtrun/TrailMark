@@ -1,6 +1,6 @@
-"""bench — SWE-bench Verified campaign harness for codegraph (control vs treatment).
+"""bench — SWE-bench Verified campaign harness for trailmark (control vs treatment).
 
-Standalone package: it imports NOTHING from ``src/codegraph`` so the measurement harness
+Standalone package: it imports NOTHING from ``src/trailmark`` so the measurement harness
 stays decoupled from the optimization layer it evaluates (SPEC "bench/" rules).
 
 Layout:

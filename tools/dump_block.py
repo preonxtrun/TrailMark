@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Print the codegraph AGENTS.md block body from the PYTHON reference pipeline.
+"""Print the trailmark AGENTS.md block body from the PYTHON reference pipeline.
 
 Used by the Rust ``parity_with_python`` test as the behavioral oracle: it runs
 ``index.update`` + ``atlas.assemble`` on a repo+issue and writes the exact block
@@ -34,9 +34,9 @@ import _deterministic_captures  # noqa: E402
 
 _deterministic_captures.apply()
 
-from codegraph.atlas import assemble  # noqa: E402
-from codegraph.cache import IndexCache  # noqa: E402
-from codegraph.index import update  # noqa: E402
+from trailmark.atlas import assemble  # noqa: E402
+from trailmark.cache import IndexCache  # noqa: E402
+from trailmark.index import update  # noqa: E402
 
 
 def main() -> int:
@@ -55,7 +55,7 @@ def main() -> int:
     if issue is None and args.issue_file:
         issue = Path(args.issue_file).read_text(encoding="utf-8")
 
-    cache = IndexCache(Path(root) / ".codegraph")
+    cache = IndexCache(Path(root) / ".trailmark")
     langs = [part.strip() for part in args.langs.split(",") if part.strip()]
     data = update(root, langs, args.workers, cache)
     body = assemble(data, issue, args.cli, args.budget)

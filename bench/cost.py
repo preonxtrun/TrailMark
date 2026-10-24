@@ -1,6 +1,6 @@
 """Usage and cost extraction for headless coding-CLI outputs (bench harness).
 
-bench/ is a standalone package and imports nothing from ``src/codegraph``: the measurement
+bench/ is a standalone package and imports nothing from ``src/trailmark``: the measurement
 harness must stay decoupled from the optimization layer it evaluates.
 
 Parsers are defensive by design — unexpected CLI output must never raise. Malformed lines

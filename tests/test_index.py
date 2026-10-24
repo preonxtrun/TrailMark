@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.cache import IndexCache
-from codegraph.index import build, pagerank, update
-from codegraph.index.scanner import Gitignore, scan
+from trailmark.cache import IndexCache
+from trailmark.index import build, pagerank, update
+from trailmark.index.scanner import Gitignore, scan
 
 # ---------------------------------------------------------------------------
 # synthetic repo fixture
@@ -430,7 +430,7 @@ class TestPagerank:
 
 class TestUpdate:
     def test_update_reuses_unchanged_and_reparses_changed(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         first = build(repo, cache=cache)
 
         old_entries = first.files
@@ -454,7 +454,7 @@ class TestUpdate:
             assert second.files[rel].size == old_entries[rel].size
 
     def test_update_drops_deleted_files(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         build(repo, cache=cache)
         os.unlink(repo / "app" / "core" / "engine.py")
         second = update(repo, cache=cache)
@@ -462,12 +462,12 @@ class TestUpdate:
         assert not any(r.src_file == "app/core/engine.py" for r in second.refs)
         assert not any(r.dst_file == "app/core/engine.py" for r in second.refs)
         # cache agrees
-        loaded = IndexCache(repo / ".codegraph").load()
+        loaded = IndexCache(repo / ".trailmark").load()
         assert loaded is not None
         assert "app/core/engine.py" not in loaded.files
 
     def test_update_noop_is_stable(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         first = build(repo, cache=cache)
         second = update(repo, cache=cache)
         assert set(second.files) == set(first.files)
@@ -521,9 +521,9 @@ class TestDeterminismAndCache:
         }
 
     def test_cache_roundtrip(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         data = build(repo, cache=cache)
-        loaded = IndexCache(repo / ".codegraph").load()
+        loaded = IndexCache(repo / ".trailmark").load()
         assert loaded is not None
         assert loaded.root == data.root
         assert set(loaded.files) == set(data.files)
@@ -536,7 +536,7 @@ class TestDeterminismAndCache:
         assert loaded.refs == data.refs
 
     def test_fts_search_session_refresh_first(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         build(repo, cache=cache)
         hits = cache.search("session refresh")
         assert hits, "search returned no hits"
@@ -546,7 +546,7 @@ class TestDeterminismAndCache:
         assert hits[0].line == line_of("auth/session.py", "def refresh(self, ttl=3600)")
 
     def test_remove_files_extension(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         build(repo, cache=cache)
         cache.remove_files(["app/main.py"])
         loaded = cache.load()
@@ -600,7 +600,7 @@ class TestPerformance:
         total = n_packages * per_package * 2 + 1
         assert total == 4001
 
-        cache = IndexCache(root / ".codegraph")
+        cache = IndexCache(root / ".trailmark")
         t0 = time.perf_counter()
         data = build(root, cache=cache)
         build_seconds = time.perf_counter() - t0

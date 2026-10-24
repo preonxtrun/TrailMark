@@ -13,7 +13,7 @@ signals** (files touched only by failed tasks are marked "avoid blind retries").
 
 ## File format
 
-`.codegraph/trails.jsonl` inside the repo — JSON lines, one line per task id
+`.trailmark/trails.jsonl` inside the repo — JSON lines, one line per task id
 (latest wins), no timestamps, fixed key order:
 
 ```json
@@ -29,17 +29,17 @@ signals** (files touched only by failed tasks are marked "avoid blind retries").
 ## Commands
 
 ```
-python -m codegraph.trails record --root R --id TASK-17 --files auth/session.py,auth/tokens.py --outcome solved
-python -m codegraph.trails clear --root R
+python -m trailmark.trails record --root R --id TASK-17 --files auth/session.py,auth/tokens.py --outcome solved
+python -m trailmark.trails clear --root R
 ```
 
-Both accept `--json` for machine-readable output. No `codegraph` CLI changes and
-nothing is written outside `.codegraph/`; a missing or damaged store reads as
+Both accept `--json` for machine-readable output. No `trailmark` CLI changes and
+nothing is written outside `.trailmark/`; a missing or damaged store reads as
 empty and a rewrite heals malformed lines (writes are atomic replace).
 
 ## How it reaches the block
 
-`codegraph init` / `codegraph focus` append a `TRAILS` section whenever the store
+`trailmark init` / `trailmark focus` append a `TRAILS` section whenever the store
 has usable entries (drop rank 7: after LAB, before PLAN — whole-section drop
 under budget pressure, MAP/RULES floors always win):
 

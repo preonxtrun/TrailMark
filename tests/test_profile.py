@@ -1,11 +1,11 @@
-"""Profile tests: .codegraph/profile.txt → LAB facts + user rules in the block."""
+"""Profile tests: .trailmark/profile.txt → LAB facts + user rules in the block."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from codegraph.atlas import assemble, load_profile
-from codegraph.util.tokens import byte_len
+from trailmark.atlas import assemble, load_profile
+from trailmark.util.tokens import byte_len
 
 
 def make_repo(tmp_path: Path) -> Path:
@@ -24,8 +24,8 @@ def make_repo(tmp_path: Path) -> Path:
 
 
 def test_load_profile_parses_facts_and_rules(tmp_path: Path):
-    (tmp_path / ".codegraph").mkdir()
-    (tmp_path / ".codegraph" / "profile.txt").write_text(
+    (tmp_path / ".trailmark").mkdir()
+    (tmp_path / ".trailmark" / "profile.txt").write_text(
         "# comment\n"
         "fact: partitions gpu, cpu\n"
         "rule: check sacct once per job\n"
@@ -44,16 +44,16 @@ def test_load_profile_absent(tmp_path: Path):
 
 def test_assemble_includes_lab_and_user_rules(tmp_path: Path):
     repo = make_repo(tmp_path)
-    (repo / ".codegraph").mkdir(exist_ok=True)
-    (repo / ".codegraph" / "profile.txt").write_text(
+    (repo / ".trailmark").mkdir(exist_ok=True)
+    (repo / ".trailmark" / "profile.txt").write_text(
         "fact: partitions gpu, cpu\n"
         "rule: never poll squeue in a loop\n",
         encoding="utf-8",
     )
-    from codegraph.cache import IndexCache
-    from codegraph.index import update
+    from trailmark.cache import IndexCache
+    from trailmark.index import update
 
-    data = update(root=str(repo), langs=None, workers=1, cache=IndexCache(repo / ".codegraph"))
+    data = update(root=str(repo), langs=None, workers=1, cache=IndexCache(repo / ".trailmark"))
     body = assemble(data, None, "generic", 4096)
     assert "LAB" in body and "partitions gpu, cpu" in body
     assert "never poll squeue in a loop" in body
@@ -62,9 +62,9 @@ def test_assemble_includes_lab_and_user_rules(tmp_path: Path):
 
 def test_assemble_without_profile_has_no_lab(tmp_path: Path):
     repo = make_repo(tmp_path)
-    from codegraph.cache import IndexCache
-    from codegraph.index import update
+    from trailmark.cache import IndexCache
+    from trailmark.index import update
 
-    data = update(root=str(repo), langs=None, workers=1, cache=IndexCache(repo / ".codegraph"))
+    data = update(root=str(repo), langs=None, workers=1, cache=IndexCache(repo / ".trailmark"))
     body = assemble(data, None, "generic", 4096)
     assert "LAB" not in body

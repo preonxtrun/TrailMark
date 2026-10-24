@@ -146,33 +146,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "codegraph-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "codegraph-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "codegraph-core"
-version = "0.1.0"
-dependencies = [
- "ignore",
- "rayon",
- "regex",
- "rusqlite",
- "thiserror",
- "tree-sitter",
- "tree-sitter-go",
- "tree-sitter-javascript",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-typescript",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -560,6 +533,33 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "trailmark-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "trailmark-core",
+]
+
+[[package]]
+name = "trailmark-core"
+version = "0.1.0"
+dependencies = [
+ "ignore",
+ "rayon",
+ "regex",
+ "rusqlite",
+ "thiserror",
+ "tree-sitter",
+ "tree-sitter-go",
+ "tree-sitter-javascript",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
 ]
 
 [[package]]

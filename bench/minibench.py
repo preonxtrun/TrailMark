@@ -1,4 +1,4 @@
-"""Local, docker-free A/B mini-bench for codegraph development iterations.
+"""Local, docker-free A/B mini-bench for trailmark development iterations.
 
 One real repo, N task statements, control vs treatment, tokens/turns delta.
 This is the fast per-generation signal (minutes); the SWE-bench standard check
@@ -6,8 +6,8 @@ This is the fast per-generation signal (minutes); the SWE-bench standard check
 verification on a small subset.
 
 Protocol per (task, arm, seed):
-    1. reset the repo worktree (git reset --hard + clean, preserving .codegraph)
-    2. arm setup: control → strip the codegraph block; treatment → ``codegraph focus``
+    1. reset the repo worktree (git reset --hard + clean, preserving .trailmark)
+    2. arm setup: control → strip the trailmark block; treatment → ``trailmark focus``
     3. run stock opencode headless in the repo; parse usage via bench.cost
     4. record patch (official exclude pathspec) + usage/turns
 
@@ -34,7 +34,7 @@ from .run import DEFAULT_MODEL
 
 logger = logging.getLogger("bench.minibench")
 
-RESET_EXCLUDES = ["-e", ".codegraph"]
+RESET_EXCLUDES = ["-e", ".trailmark"]
 
 
 def _git(repo: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -44,7 +44,7 @@ def _git(repo: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProc
 
 
 def reset_repo(repo: Path) -> None:
-    """Hard-reset the worktree, preserving .codegraph (untracked files cleaned)."""
+    """Hard-reset the worktree, preserving .trailmark (untracked files cleaned)."""
     for args in (("reset", "--hard", "HEAD"), ("clean", "-fd", *RESET_EXCLUDES)):
         proc = _git(repo, *args)
         if proc.returncode != 0:
@@ -61,7 +61,7 @@ def patch_extract(repo: Path) -> str:
 def _rust_binary() -> Path:
     """Locate the release Rust binary (Gen 1.0 treatment core)."""
     root = Path(__file__).resolve().parents[1]
-    binary = root / "target" / "release" / "codegraph"
+    binary = root / "target" / "release" / "trailmark"
     if not binary.is_file():
         raise SystemExit(f"rust binary not found at {binary} — run: cargo build --release")
     return binary
@@ -76,7 +76,7 @@ def arm_setup(
     core: str = "python",
 ) -> None:
     """control → strip the block; treatment → focus (python in-process or rust binary)."""
-    from codegraph.emit.agents_md import remove_block
+    from trailmark.emit.agents_md import remove_block
 
     if arm == "control":
         remove_block(repo / "AGENTS.md")
@@ -88,7 +88,7 @@ def arm_setup(
         import subprocess
 
         binary = str(_rust_binary())
-        if not (repo / ".codegraph" / "index.db").exists():
+        if not (repo / ".trailmark" / "index.db").exists():
             subprocess.run(
                 [binary, "init", "--root", str(repo), "--budget", str(budget)],
                 check=True, capture_output=True, text=True, timeout=300,
@@ -105,12 +105,12 @@ def arm_setup(
             raise RuntimeError(f"rust focus failed rc={proc.returncode}: {proc.stderr[-200:]}")
         return
 
-    from codegraph.cache import IndexCache
-    from codegraph.focus import cli_focus
+    from trailmark.cache import IndexCache
+    from trailmark.focus import cli_focus
 
-    cache = IndexCache(repo / ".codegraph")
+    cache = IndexCache(repo / ".trailmark")
     if cache.load() is None:
-        from codegraph.index import update
+        from trailmark.index import update
 
         t0 = time.perf_counter()
         update(root=str(repo), langs=None, workers=8, cache=cache)
@@ -120,18 +120,18 @@ def arm_setup(
     )
     rc = cli_focus.run(args)
     if rc != 0:
-        raise RuntimeError(f"codegraph focus failed rc={rc}")
+        raise RuntimeError(f"trailmark focus failed rc={rc}")
     # Protect the layer's footprint from the agent's own git hygiene (with --auto the
-    # agent can run git clean; untracked .codegraph/ would be swept). .git/info/exclude
+    # agent can run git clean; untracked .trailmark/ would be swept). .git/info/exclude
     # is local-only: no repo pollution, clean patches, and cleans stop deleting state.
     exclude = repo / ".git" / "info" / "exclude"
     try:
         current = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-        needed = [entry for entry in (".codegraph/", "AGENTS.md") if entry not in current]
+        needed = [entry for entry in (".trailmark/", "AGENTS.md") if entry not in current]
         if needed:
             exclude.parent.mkdir(parents=True, exist_ok=True)
             with exclude.open("a", encoding="utf-8") as fh:
-                fh.write("\n# codegraph layer (local)\n" + "\n".join(needed) + "\n")
+                fh.write("\n# trailmark layer (local)\n" + "\n".join(needed) + "\n")
     except OSError:
         logger.warning("could not update .git/info/exclude")
 

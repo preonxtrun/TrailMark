@@ -1,9 +1,9 @@
 """Atlas subsystem tests: determinism, budget packing, glossary, testgraph, rules, CLI.
 
-Unit tests build synthetic :class:`~codegraph.model.IndexData` objects directly and
-never import ``codegraph.index`` (a sibling module may not exist yet); the pagerank
-path is exercised by stubbing ``sys.modules["codegraph.index.graph"]``. CLI tests
-monkeypatch a fake ``codegraph.index`` module returning the synthetic data, proving
+Unit tests build synthetic :class:`~trailmark.model.IndexData` objects directly and
+never import ``trailmark.index`` (a sibling module may not exist yet); the pagerank
+path is exercised by stubbing ``sys.modules["trailmark.index.graph"]``. CLI tests
+monkeypatch a fake ``trailmark.index`` module returning the synthetic data, proving
 the CLI works end-to-end without the real indexer.
 """
 
@@ -14,12 +14,12 @@ import sys
 import types
 from pathlib import Path
 
-from codegraph import cli
-from codegraph.atlas import assemble, builder, glossary, rules, testgraph
-from codegraph.atlas.budget import Section, pack
-from codegraph.emit import agents_md
-from codegraph.model import DEFAULT_BUDGET_BYTES, FileEntry, IndexData, Ref, Symbol
-from codegraph.util.tokens import byte_len
+from trailmark import cli
+from trailmark.atlas import assemble, builder, glossary, rules, testgraph
+from trailmark.atlas.budget import Section, pack
+from trailmark.emit import agents_md
+from trailmark.model import DEFAULT_BUDGET_BYTES, FileEntry, IndexData, Ref, Symbol
+from trailmark.util.tokens import byte_len
 
 MT = 1_700_000_000.0  # fixed fake mtime (never emitted)
 
@@ -67,7 +67,7 @@ _DB_SYMS = [
 ]
 _CLI_SYMS = [
     _sym("src/cli.py", "main", "def", 5, 30, "def main(argv=None) -> int",
-         "Console entrypoint for codegraph"),
+         "Console entrypoint for trailmark"),
 ]
 _TEST_SESSION_SYMS = [
     _sym("tests/test_session.py", "test_refresh_token", "def", 6, 10,
@@ -124,16 +124,16 @@ def make_data(root: str = "/repo", on_disk: bool = False) -> IndexData:
 
 
 def install_fake_index(monkeypatch, data: IndexData) -> None:
-    """Stub codegraph.index with the frozen build/update signature."""
-    fake = types.ModuleType("codegraph.index")
+    """Stub trailmark.index with the frozen build/update signature."""
+    fake = types.ModuleType("trailmark.index")
     fake.update = lambda root, langs, workers, cache: data
     fake.build = lambda root, langs, workers, cache: data
-    monkeypatch.setitem(sys.modules, "codegraph.index", fake)
+    monkeypatch.setitem(sys.modules, "trailmark.index", fake)
 
 
 def install_stub_pagerank(monkeypatch) -> None:
-    """Stub codegraph.index.graph.pagerank with a deterministic ref-count score."""
-    graph = types.ModuleType("codegraph.index.graph")
+    """Stub trailmark.index.graph.pagerank with a deterministic ref-count score."""
+    graph = types.ModuleType("trailmark.index.graph")
 
     def pagerank(files, refs, damping=0.85, iters=30, personalization=None):
         scores = {p: 0.0 for p in files}
@@ -143,10 +143,10 @@ def install_stub_pagerank(monkeypatch) -> None:
         return scores
 
     graph.pagerank = pagerank
-    index = types.ModuleType("codegraph.index")
+    index = types.ModuleType("trailmark.index")
     index.graph = graph
-    monkeypatch.setitem(sys.modules, "codegraph.index", index)
-    monkeypatch.setitem(sys.modules, "codegraph.index.graph", graph)
+    monkeypatch.setitem(sys.modules, "trailmark.index", index)
+    monkeypatch.setitem(sys.modules, "trailmark.index.graph", graph)
 
 
 def section_lines(body: str, tag: str) -> list[str]:
@@ -263,7 +263,7 @@ def _sample_sections() -> list[Section]:
             items=[
                 "LEADS (verify, don't trust):",
                 "1. a.py:1-2 — x",
-                "OUTLINES: .codegraph/outlines/a.py.md",
+                "OUTLINES: .trailmark/outlines/a.py.md",
             ],
         ),
         Section(tag="PLAN", rank=20, items=["1. a.py:1-2 — x"]),
@@ -489,8 +489,8 @@ def test_map_orders_by_pagerank_with_stub(monkeypatch):
 
 def test_map_alphabetical_fallback_without_pagerank(monkeypatch):
     # hide both the package and the (possibly cached) graph submodule
-    monkeypatch.setitem(sys.modules, "codegraph.index", None)
-    monkeypatch.setitem(sys.modules, "codegraph.index.graph", None)
+    monkeypatch.setitem(sys.modules, "trailmark.index", None)
+    monkeypatch.setitem(sys.modules, "trailmark.index.graph", None)
     data = make_data()
     rows = builder.build_map(data, None)
     assert rows == builder.build_map(data, None)
@@ -533,7 +533,7 @@ def test_plan_section_with_issue():
     data = make_data()
     body = assemble(data, "refresh token expiry breaks session open", "claude", 4096)
     assert "PLAN" in body and "LEADS (verify, don't trust; one ranged read each, then act):" in body
-    assert "OUTLINES: .codegraph/outlines/src/auth/session.py.md" in body
+    assert "OUTLINES: .trailmark/outlines/src/auth/session.py.md" in body
     assert "1. src/auth/session.py:40-64 — matches:" in body
     plan_rows = section_lines(body, "PLAN")
     assert 1 < len(plan_rows) <= 7  # header + ≤5 leads + outlines row
@@ -588,8 +588,8 @@ def test_cli_init_stats_doctor_remove_roundtrip(tmp_path, monkeypatch, capsys):
     agents.write_text("Intro line\n")  # content outside the markers must survive
     data = make_data(str(tmp_path), on_disk=True)
     install_fake_index(monkeypatch, data)
-    monkeypatch.setitem(sys.modules, "codegraph.focus", None)  # force lazy-skip paths
-    monkeypatch.setitem(sys.modules, "codegraph.focus.cli_focus", None)
+    monkeypatch.setitem(sys.modules, "trailmark.focus", None)  # force lazy-skip paths
+    monkeypatch.setitem(sys.modules, "trailmark.focus.cli_focus", None)
 
     rc = cli.main(["--root", str(tmp_path), "--json", "init"])
     assert rc == 0
@@ -626,11 +626,11 @@ def test_cli_init_stats_doctor_remove_roundtrip(tmp_path, monkeypatch, capsys):
 
     rc = cli.main(["--root", str(tmp_path), "remove", "--purge", "--json"])
     assert rc == 0
-    assert not (tmp_path / ".codegraph").exists()
+    assert not (tmp_path / ".trailmark").exists()
 
 
 def test_cli_init_without_index_module(tmp_path, monkeypatch, capsys):
-    monkeypatch.setitem(sys.modules, "codegraph.index", None)
+    monkeypatch.setitem(sys.modules, "trailmark.index", None)
     rc = cli.main(["--root", str(tmp_path), "init"])
     assert rc == 2
     assert "index module unavailable" in capsys.readouterr().err
@@ -639,7 +639,7 @@ def test_cli_init_without_index_module(tmp_path, monkeypatch, capsys):
 def test_cli_stats_without_cache(tmp_path, capsys):
     rc = cli.main(["--root", str(tmp_path), "stats"])
     assert rc == 2
-    assert "codegraph init" in capsys.readouterr().err
+    assert "trailmark init" in capsys.readouterr().err
 
 
 def test_cli_doctor_reports_missing_block(tmp_path, monkeypatch, capsys):
@@ -657,8 +657,8 @@ def test_cli_doctor_reports_missing_block(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_focus_delegates_or_exit_3(tmp_path, monkeypatch, capsys):
-    monkeypatch.setitem(sys.modules, "codegraph.focus", None)
-    monkeypatch.setitem(sys.modules, "codegraph.focus.cli_focus", None)
+    monkeypatch.setitem(sys.modules, "trailmark.focus", None)
+    monkeypatch.setitem(sys.modules, "trailmark.focus.cli_focus", None)
     rc = cli.main(["--root", str(tmp_path), "focus", "fix the token refresh bug"])
     assert rc == 3
     assert "focus module unavailable" in capsys.readouterr().err
@@ -668,7 +668,7 @@ def test_cli_watch_refreshes_once_and_exits_cleanly(tmp_path, monkeypatch, capsy
     _write_repo(tmp_path)
     data = make_data(str(tmp_path), on_disk=True)
     install_fake_index(monkeypatch, data)
-    monkeypatch.setitem(sys.modules, "codegraph.focus", None)
+    monkeypatch.setitem(sys.modules, "trailmark.focus", None)
     calls = {"n": 0}
 
     def fake_sleep(_seconds: float) -> None:

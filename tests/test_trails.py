@@ -1,4 +1,4 @@
-"""Trails tests: .codegraph/trails.jsonl pheromone memory + the TRAILS block section.
+"""Trails tests: .trailmark/trails.jsonl pheromone memory + the TRAILS block section.
 
 Covers the store (record/summarize/clear), its determinism and evaporation, the
 dead-end (negative-signal) rule, and the additive atlas integration: with no
@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.atlas import assemble, glossary
-from codegraph.trails import (
+from trailmark.atlas import assemble, glossary
+from trailmark.trails import (
     DEAD_END_HEADER,
     MAX_ENTRIES,
     clear,
@@ -25,7 +25,7 @@ from codegraph.trails import (
     section_items,
     summarize,
 )
-from codegraph.util.tokens import byte_len
+from trailmark.util.tokens import byte_len
 
 _TAGS = {"RULES", "MAP", "TESTS", "PLAN", "GLOSSARY", "LAB", "TRAILS"}
 
@@ -61,14 +61,14 @@ def make_repo(tmp_path: Path) -> Path:
 
 def make_data(repo: Path):
     """IndexData for *repo* via the real indexer (repo files exist on disk)."""
-    from codegraph.cache import IndexCache
-    from codegraph.index import update
+    from trailmark.cache import IndexCache
+    from trailmark.index import update
 
-    return update(root=str(repo), langs=None, workers=1, cache=IndexCache(repo / ".codegraph"))
+    return update(root=str(repo), langs=None, workers=1, cache=IndexCache(repo / ".trailmark"))
 
 
 def trails_path(repo: Path) -> Path:
-    return repo / ".codegraph" / "trails.jsonl"
+    return repo / ".trailmark" / "trails.jsonl"
 
 
 # -- store: record / summarize ---------------------------------------------------
@@ -163,14 +163,14 @@ def test_empty_store_reads_as_empty(tmp_path):
     repo = str(tmp_path)
     assert summarize(repo) == ([], [])
     assert section_items(repo) == []
-    (tmp_path / ".codegraph").mkdir()
+    (tmp_path / ".trailmark").mkdir()
     trails_path(tmp_path).write_text("", encoding="utf-8")
     assert summarize(repo) == ([], [])
     assert section_items(repo) == []
 
 
 def test_malformed_lines_are_skipped_and_healed(tmp_path):
-    cg = tmp_path / ".codegraph"
+    cg = tmp_path / ".trailmark"
     cg.mkdir()
     trails_path(tmp_path).write_text(
         "not json\n"
@@ -228,7 +228,7 @@ def test_assemble_byte_identical_without_trails(tmp_path):
     repo = make_repo(tmp_path)
     data = make_data(repo)
     snapshot = {b: assemble(data, None, "generic", b) for b in (512, 2048, 4096)}
-    (repo / ".codegraph").mkdir(exist_ok=True)
+    (repo / ".trailmark").mkdir(exist_ok=True)
     trails_path(repo).write_text("", encoding="utf-8")  # empty trails file
     for b, snap in snapshot.items():
         assert assemble(data, None, "generic", b) == snap
@@ -308,7 +308,7 @@ def test_trails_drop_rank_between_glossary_and_plan(tmp_path):
     assert "TRAILS" not in body2 and "MAP" in body2
 
 
-# -- CLI entry (python -m codegraph.trails) ------------------------------------------
+# -- CLI entry (python -m trailmark.trails) ------------------------------------------
 
 
 def test_cli_record_and_clear_json(tmp_path, capsys):
@@ -351,7 +351,7 @@ def test_python_m_trails_entrypoint(tmp_path):
     """The exact documented commands, run as a real subprocess."""
     repo = str(tmp_path)
     proc = subprocess.run(
-        [sys.executable, "-m", "codegraph.trails", "record", "--root", repo,
+        [sys.executable, "-m", "trailmark.trails", "record", "--root", repo,
          "--id", "T1", "--files", "a.py,b.py", "--outcome", "solved", "--json"],
         capture_output=True,
         text=True,
@@ -363,7 +363,7 @@ def test_python_m_trails_entrypoint(tmp_path):
     assert payload["recorded"] is True and payload["files"] == ["a.py", "b.py"]
     assert summarize(repo) == (["a.py", "b.py"], [])
     proc = subprocess.run(
-        [sys.executable, "-m", "codegraph.trails", "clear", "--root", repo, "--json"],
+        [sys.executable, "-m", "trailmark.trails", "clear", "--root", repo, "--json"],
         capture_output=True,
         text=True,
         timeout=60,

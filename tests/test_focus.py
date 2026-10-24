@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from codegraph.cache import IndexCache
-from codegraph.emit.agents_md import read_block
-from codegraph.focus import cli_focus
-from codegraph.focus.outlines import MAX_LINES, TRUNCATION_MARK, generate_for, generate_top
-from codegraph.focus.plan import render_plan
-from codegraph.focus.ranker import Lead, file_pagerank, rank
-from codegraph.model import FileEntry, IndexData, Ref, Symbol
-from codegraph.util.tokens import byte_len
+from trailmark.cache import IndexCache
+from trailmark.emit.agents_md import read_block
+from trailmark.focus import cli_focus
+from trailmark.focus.outlines import MAX_LINES, TRUNCATION_MARK, generate_for, generate_top
+from trailmark.focus.plan import render_plan
+from trailmark.focus.ranker import Lead, file_pagerank, rank
+from trailmark.model import FileEntry, IndexData, Ref, Symbol
+from trailmark.util.tokens import byte_len
 
 ISSUE = "refresh the expired session token"
 
@@ -232,7 +232,7 @@ def make_data(root: str = "") -> IndexData:
 @pytest.fixture()
 def indexed(tmp_path: Path) -> tuple[IndexData, IndexCache]:
     """IndexData persisted through a real IndexCache and loaded back (mirrors prod)."""
-    cache = IndexCache(tmp_path / ".codegraph")
+    cache = IndexCache(tmp_path / ".trailmark")
     cache.save(make_data(root=str(tmp_path)))
     data = cache.load()
     assert data is not None
@@ -266,13 +266,13 @@ def install_fake_atlas(monkeypatch: pytest.MonkeyPatch, body: str = "TEST BODY")
         return body
 
     try:
-        import codegraph.atlas as atlas_module
+        import trailmark.atlas as atlas_module
     except ImportError:
         stub = types.SimpleNamespace(assemble=fake_assemble)
-        monkeypatch.setitem(sys.modules, "codegraph.atlas", stub)
-        import codegraph as codegraph_pkg
+        monkeypatch.setitem(sys.modules, "trailmark.atlas", stub)
+        import trailmark as trailmark_pkg
 
-        monkeypatch.setattr(codegraph_pkg, "atlas", stub, raising=False)
+        monkeypatch.setattr(trailmark_pkg, "atlas", stub, raising=False)
     else:
         monkeypatch.setattr(atlas_module, "assemble", fake_assemble)
 
@@ -370,7 +370,7 @@ class TestRenderPlan:
         assert text.startswith("PLAN\nLEADS (verify, don't trust):\n")
         lines = text.splitlines()
         assert "1. src/auth/session.py:12-30 — Refresh the session token (Session.refresh)" in lines
-        assert "OUTLINES: .codegraph/outlines/src/auth/session.py.md" in lines
+        assert "OUTLINES: .trailmark/outlines/src/auth/session.py.md" in lines
         assert sum(line.startswith("OUTLINES:") for line in lines) == 3
         assert sum(line[:1].isdigit() for line in lines) == 3
 
@@ -419,7 +419,7 @@ class TestRenderPlan:
 
 class TestOutlines:
     def test_outline_content(self, tmp_path) -> None:
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         data = cache.load()
         assert data is not None
@@ -461,7 +461,7 @@ class TestOutlines:
         assert lines[0] == "# src/big.py"
 
     def test_idempotent_noop_rewrite(self, tmp_path) -> None:
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         data = cache.load()
         assert data is not None
@@ -477,7 +477,7 @@ class TestOutlines:
         assert target.stat().st_mtime_ns == before_mtime, "unchanged outline must not be rewritten"
 
     def test_missing_paths_skipped_and_top_generation(self, tmp_path) -> None:
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         data = cache.load()
         assert data is not None
@@ -501,7 +501,7 @@ class TestOutlines:
 class TestCliFocus:
     def test_end_to_end(self, tmp_path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
         monkeypatch.delenv("CLAUDECODE", raising=False)
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         (tmp_path / "AGENTS.md").write_text("user notes\n", encoding="utf-8")
         install_fake_atlas(monkeypatch)
@@ -512,7 +512,7 @@ class TestCliFocus:
         agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert "user notes" in agents, "content outside the block must survive"
         assert read_block(tmp_path / "AGENTS.md") == "TEST BODY"
-        assert (tmp_path / ".codegraph" / "outlines" / "src/auth/session.py.md").exists()
+        assert (tmp_path / ".trailmark" / "outlines" / "src/auth/session.py.md").exists()
 
         payload = json.loads(capsys.readouterr().out)
         assert payload["cli"] == "generic"
@@ -523,7 +523,7 @@ class TestCliFocus:
 
     def test_block_write_is_idempotent(self, tmp_path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
         monkeypatch.delenv("CLAUDECODE", raising=False)
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         install_fake_atlas(monkeypatch)
         args = make_args(root=str(tmp_path), issue=ISSUE, json=True)
@@ -536,7 +536,7 @@ class TestCliFocus:
     def test_issue_file_and_cli_passthrough(self, tmp_path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
         issue_file = tmp_path / "issue.txt"
         issue_file.write_text(f"{ISSUE}\n", encoding="utf-8")
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         install_fake_atlas(monkeypatch)
 
@@ -549,10 +549,10 @@ class TestCliFocus:
     def test_missing_cache_exit_2(self, tmp_path, capsys) -> None:
         args = make_args(root=str(tmp_path), issue=ISSUE)
         assert cli_focus.run(args) == 2
-        assert "run `codegraph init` first" in capsys.readouterr().err
+        assert "run `trailmark init` first" in capsys.readouterr().err
 
     def test_empty_issue_exit_2(self, tmp_path, capsys) -> None:
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         assert cli_focus.run(make_args(root=str(tmp_path), issue="   ")) == 2
         assert "no issue text" in capsys.readouterr().err
@@ -563,14 +563,14 @@ class TestCliFocus:
                 return ""
 
         monkeypatch.setattr(sys, "stdin", _EmptyStdin())
-        cache = IndexCache(tmp_path / ".codegraph")
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
         assert cli_focus.run(make_args(root=str(tmp_path))) == 2
         assert "no issue text" in capsys.readouterr().err
 
     def test_missing_atlas_falls_back_to_plan_body(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setitem(sys.modules, "codegraph.atlas", None)  # force ImportError
-        cache = IndexCache(tmp_path / ".codegraph")
+        monkeypatch.setitem(sys.modules, "trailmark.atlas", None)  # force ImportError
+        cache = IndexCache(tmp_path / ".trailmark")
         cache.save(make_data(root=str(tmp_path)))
 
         args = make_args(root=str(tmp_path), issue=ISSUE)

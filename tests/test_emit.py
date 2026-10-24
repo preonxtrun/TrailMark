@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from codegraph.emit import agents_md, fmt
-from codegraph.model import BLOCK_END, BLOCK_START
-from codegraph.util.tokens import byte_len
+from trailmark.emit import agents_md, fmt
+from trailmark.model import BLOCK_END, BLOCK_START
+from trailmark.util.tokens import byte_len
 
-BODY = "# CODEGRAPH ATLAS — auto-generated\ntitle\nRULES\n- keep MAP/TESTS in mind\n"
+BODY = "# TRAILMARK ATLAS — auto-generated\ntitle\nRULES\n- keep MAP/TESTS in mind\n"
 BODY2 = "replacement body\nwith two lines"
 
 

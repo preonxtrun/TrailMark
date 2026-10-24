@@ -15,12 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from codegraph import cli
-from codegraph.cache import IndexCache
-from codegraph.emit.agents_md import write_block
-from codegraph.focus import ranker
-from codegraph.index import update
-from codegraph.util.tokens import byte_len
+from trailmark import cli
+from trailmark.cache import IndexCache
+from trailmark.emit.agents_md import write_block
+from trailmark.focus import ranker
+from trailmark.index import update
+from trailmark.util.tokens import byte_len
 
 ISSUE = "greet"
 
@@ -61,7 +61,7 @@ def _repo(tmp_path: Path) -> Path:
 def repo(tmp_path: Path) -> Path:
     """Indexed fixture repo (real pipeline, workers=1, cache persisted)."""
     base = _repo(tmp_path)
-    update(root=str(base), langs=None, workers=1, cache=IndexCache(base / ".codegraph"))
+    update(root=str(base), langs=None, workers=1, cache=IndexCache(base / ".trailmark"))
     return base
 
 
@@ -121,7 +121,7 @@ class TestWhy:
     def test_human_output_has_table_and_top_leads(self, repo: Path, capsys) -> None:
         rc, out, _err = _run(["why", ISSUE, "--root", str(repo)], capsys)
         assert rc == 0
-        assert "codegraph why:" in out
+        assert "trailmark why:" in out
         assert "weights: lexical=0.45 graph=0.25 test=0.15 prior=0.15" in out
         assert "alpha/greeter.py" in out
         assert "top leads (what `focus` injects into PLAN):" in out
@@ -135,7 +135,7 @@ class TestWhy:
     def test_missing_cache_exit_2(self, tmp_path: Path, capsys) -> None:
         rc, _out, err = _run(["why", ISSUE, "--root", str(tmp_path)], capsys)
         assert rc == 2
-        assert "run `codegraph init` first" in err
+        assert "run `trailmark init` first" in err
 
     def test_root_flag_before_subcommand(self, repo: Path, capsys) -> None:
         rc, payload = _run_json(["--root", str(repo), "why", ISSUE], capsys)
@@ -151,14 +151,14 @@ class TestWhy:
 class TestExplainHook:
     @pytest.mark.parametrize("k", [1, 3, 8])
     def test_explain_leads_equal_rank(self, repo: Path, k: int) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         data = cache.load()
         assert data is not None
         explained = ranker.explain(ISSUE, data, cache, k)
         assert [lead for lead, _ in explained] == ranker.rank(data, cache, ISSUE, k=k)
 
     def test_explain_vague_issue_fallback_matches_rank(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         data = cache.load()
         assert data is not None
         explained = ranker.explain("zzzqqq unm4tchable", data, cache, 5)
@@ -168,11 +168,11 @@ class TestExplainHook:
         assert explained, "pagerank fallback must still produce leads"
 
     def test_explain_empty_inputs(self, repo: Path) -> None:
-        cache = IndexCache(repo / ".codegraph")
+        cache = IndexCache(repo / ".trailmark")
         data = cache.load()
         assert data is not None
         assert ranker.explain(ISSUE, data, cache, 0) == []
-        from codegraph.model import IndexData as _IndexData
+        from trailmark.model import IndexData as _IndexData
 
         assert ranker.explain(ISSUE, _IndexData(root="", files={}, refs=[]), cache, 8) == []
 
@@ -210,7 +210,7 @@ class TestSearch:
     def test_missing_cache_exit_2(self, tmp_path: Path, capsys) -> None:
         rc, _out, err = _run(["search", "greet", "--root", str(tmp_path)], capsys)
         assert rc == 2
-        assert "run `codegraph init` first" in err
+        assert "run `trailmark init` first" in err
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +258,7 @@ class TestRefs:
     def test_missing_cache_exit_2(self, tmp_path: Path, capsys) -> None:
         rc, _out, err = _run(["refs", "x.py", "--root", str(tmp_path)], capsys)
         assert rc == 2
-        assert "run `codegraph init` first" in err
+        assert "run `trailmark init` first" in err
 
     def test_human_output_sections(self, repo: Path, capsys) -> None:
         rc, out, _err = _run(["refs", "beta/factory.py", "--root", str(repo)], capsys)
@@ -350,8 +350,8 @@ class TestSelftest:
             sandbox = Path(payload["sandbox"])
             assert payload["kept"] is True
             assert sandbox.is_dir()
-            assert (sandbox / ".codegraph" / "index.db").exists()
-            outlines = sandbox / ".codegraph" / "outlines"
+            assert (sandbox / ".trailmark" / "index.db").exists()
+            outlines = sandbox / ".trailmark" / "outlines"
             assert outlines.is_dir() and any(outlines.iterdir()), "focus wrote outlines"
             # the final check removes the block again — the kept AGENTS.md holds
             # the restored outside-marker content (g1-remove-restores evidence)
