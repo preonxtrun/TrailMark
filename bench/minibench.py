@@ -292,7 +292,9 @@ def main() -> int:
         try:
             reset_repo(wt)
             arm_setup(wt, arm, task["statement"], args.model, args.budget, core=args.core)
-            stdout, rc = run_agent(wt, task["statement"], args.model, args.timeout)
+            stdout, rc = run_agent(
+                wt, task["statement"], args.model, args.timeout, max_turns=args.max_turns
+            )
             streams_dir = out_dir / "streams"
             streams_dir.mkdir(exist_ok=True)
             (streams_dir / f"{task['id']}.{arm}.s{seed}.jsonl").write_text(stdout)
