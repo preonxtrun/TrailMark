@@ -8,4 +8,6 @@ dist/
 build/
 runs/
 .codegraph/
+.trailmark/
 /target/
+logs/
